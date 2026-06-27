@@ -1,4 +1,4 @@
-# 路径: OpenBook/.github/workflows/build.yml
+# 路径: .github/workflows/build.yml
 name: Build APK for Android 4.4
 
 on:
@@ -28,7 +28,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up JDK 21
+      - name: Set up JDK 21 (for SDK manager)
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
@@ -46,7 +46,7 @@ jobs:
           sdkmanager "platform-tools"
           sdkmanager "extras;android;m2repository"
 
-      - name: Set up JDK 8 for Gradle
+      - name: Set up JDK 8 (for Gradle build)
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
@@ -58,18 +58,10 @@ jobs:
           unzip -q gradle-${{ env.GRADLE_VERSION }}-bin.zip -d /opt/
           echo "/opt/gradle-${{ env.GRADLE_VERSION }}/bin" >> $GITHUB_PATH
 
-      - name: Generate Gradle Wrapper (if missing)
+      - name: Build Debug APK (using system Gradle)
         run: |
           cd ${{ env.PROJECT_DIR }}
-          if [ ! -f gradlew ]; then
-            gradle wrapper --gradle-version ${{ env.GRADLE_VERSION }}
-          fi
-          chmod +x gradlew
-
-      - name: Build Debug APK
-        run: |
-          cd ${{ env.PROJECT_DIR }}
-          ./gradlew clean assembleDebug --info --stacktrace
+          gradle clean assembleDebug --info --stacktrace
         env:
           JAVA_OPTS: -Dfile.encoding=UTF-8
 
