@@ -1,0 +1,2 @@
+// 路径: OpenBook/settings.gradle
+include ':app'
