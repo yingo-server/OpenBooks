@@ -1,0 +1,103 @@
+# 路径: OpenBook/.github/workflows/build.yml
+name: Build APK for Android 4.4
+
+on:
+  push:
+    tags:
+      - 'v*'
+    branches:
+      - main
+      - master
+  pull_request:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build APK (compileSdk 19, minSdk 19)
+    runs-on: ubuntu-latest
+
+    env:
+      PROJECT_DIR: .
+      APK_OUTPUT: app/build/outputs/apk/debug/app-debug.apk
+      GRADLE_VERSION: 4.10.1
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+
+      - name: Install SDK components
+        run: |
+          set -e
+          yes | sdkmanager --licenses
+          sdkmanager "platforms;android-19"
+          sdkmanager "build-tools;26.0.2"
+          sdkmanager "platform-tools"
+          sdkmanager "extras;android;m2repository"
+
+      - name: Set up JDK 8 for Gradle
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '8'
+
+      - name: Download and install Gradle
+        run: |
+          wget -q https://services.gradle.org/distributions/gradle-${{ env.GRADLE_VERSION }}-bin.zip
+          unzip -q gradle-${{ env.GRADLE_VERSION }}-bin.zip -d /opt/
+          echo "/opt/gradle-${{ env.GRADLE_VERSION }}/bin" >> $GITHUB_PATH
+
+      - name: Generate Gradle Wrapper (if missing)
+        run: |
+          cd ${{ env.PROJECT_DIR }}
+          if [ ! -f gradlew ]; then
+            gradle wrapper --gradle-version ${{ env.GRADLE_VERSION }}
+          fi
+          chmod +x gradlew
+
+      - name: Build Debug APK
+        run: |
+          cd ${{ env.PROJECT_DIR }}
+          ./gradlew clean assembleDebug --info --stacktrace
+        env:
+          JAVA_OPTS: -Dfile.encoding=UTF-8
+
+      - name: Verify APK
+        run: |
+          cd ${{ env.PROJECT_DIR }}
+          if [ -f "${{ env.APK_OUTPUT }}" ]; then
+            echo "APK generated successfully!"
+            ls -lh "${{ env.APK_OUTPUT }}"
+          else
+            echo "ERROR: APK not found"
+            exit 1
+          fi
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenBook-debug-apk
+          path: ${{ env.PROJECT_DIR }}/${{ env.APK_OUTPUT }}
+          retention-days: 7
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: ${{ env.PROJECT_DIR }}/${{ env.APK_OUTPUT }}
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
