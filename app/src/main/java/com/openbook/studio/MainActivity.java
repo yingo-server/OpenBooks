@@ -1,9 +1,6 @@
-// 路径: OpenBook/app/src/main/java/com/openbook/studio/MainActivity.java
 package com.openbook.studio;
 
 import android.app.Activity;
-import android.content.Context;
-import android.content.SharedPreferences;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
@@ -20,19 +17,12 @@ import android.view.WindowManager;
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.OutputStreamWriter;
-import java.lang.ref.WeakReference;
-import java.net.URLEncoder;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.Comparator;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
@@ -118,9 +108,8 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        setContentView(R.layout.activity_main); // 我们将动态创建 SurfaceView，不使用 XML
 
-        // 创建 SurfaceView 并添加到根视图
+        // 直接创建 SurfaceView，无需 XML 布局
         surfaceView = new SurfaceView(this);
         holder = surfaceView.getHolder();
         holder.addCallback(this);
@@ -183,7 +172,6 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
     @Override
     public void run() {
         while (isRunning) {
-            // 等待 Surface 可用
             while (!isSurfaceReady && isRunning) {
                 synchronized (lock) {
                     try {
@@ -205,7 +193,6 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                 }
             }
 
-            // 50ms 刷新，约 20fps
             try {
                 Thread.sleep(50);
             } catch (InterruptedException ignored) {}
@@ -220,11 +207,9 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
     private Paint bottomPaint = new Paint();
 
     private void drawUI(Canvas canvas) {
-        // 背景
         bgPaint.setColor(Color.BLACK);
         canvas.drawRect(0, 0, 240, 240, bgPaint);
 
-        // 状态栏背景
         statusPaint.setColor(Color.DKGRAY);
         canvas.drawRect(0, 0, 240, STATUS_HEIGHT, statusPaint);
         statusPaint.setColor(Color.WHITE);
@@ -236,7 +221,6 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         float rightWidth = statusPaint.measureText(right);
         canvas.drawText(right, 240 - rightWidth - 4, STATUS_HEIGHT - 6, statusPaint);
 
-        // 底部指示栏
         bottomPaint.setColor(Color.DKGRAY);
         canvas.drawRect(0, 240 - BOTTOM_HEIGHT, 240, 240, bottomPaint);
         bottomPaint.setColor(Color.WHITE);
@@ -251,7 +235,6 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         float bottomWidth = bottomPaint.measureText(bottomText);
         canvas.drawText(bottomText, (240 - bottomWidth) / 2, 240 - 10, bottomPaint);
 
-        // 内容区域
         if (currentState == STATE_BOOK_LIST) {
             drawBookList(canvas);
         } else {
@@ -275,7 +258,6 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
             String name = bookNames.get(idx);
             int y = CONTENT_TOP + i * LIST_ITEM_HEIGHT + LIST_ITEM_HEIGHT - 8;
             canvas.drawText(name, 8, y, textPaint);
-            // 分隔线
             canvas.drawLine(0, CONTENT_TOP + i * LIST_ITEM_HEIGHT + LIST_ITEM_HEIGHT,
                     240, CONTENT_TOP + i * LIST_ITEM_HEIGHT + LIST_ITEM_HEIGHT, textPaint);
         }
@@ -294,7 +276,6 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                 canvas.drawText(String.valueOf(ch), x, y, textPaint);
             }
         }
-        // 页码信息（底部栏已显示，但可以显示在内容区右下）
         bottomPaint.setColor(Color.GRAY);
         bottomPaint.setTextSize(16);
         String pageInfo = currentChapter + "  " + (currentPage + 1) + "/" + totalPages;
@@ -323,13 +304,10 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
             float dist = (float) Math.sqrt(dx * dx + dy * dy);
             long elapsed = upTime - downTime;
 
-            // 忽略状态栏和底部区域
             if (downY < STATUS_HEIGHT || downY > CONTENT_BOTTOM) return false;
 
-            // 长按判定
             if (elapsed >= LONG_PRESS_DURATION) {
                 if (currentState == STATE_READING) {
-                    // 退出阅读
                     currentState = STATE_BOOK_LIST;
                     statusMessage = "";
                     logger.log(Logger.INFO, "长按退出阅读");
@@ -338,7 +316,6 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
             }
 
             if (dist < TOUCH_SLOP) {
-                // 点击
                 if (currentState == STATE_BOOK_LIST) {
                     int relY = (int) (downY - CONTENT_TOP);
                     int index = bookListScrollOffset + relY / LIST_ITEM_HEIGHT;
@@ -346,18 +323,14 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                         selectBook(index);
                     }
                 } else {
-                    // 阅读点击翻页
                     if (upX < 120) {
-                        // 左半屏：上一面
                         turnPrevious();
                     } else {
-                        // 右半屏：下一面
                         turnNext();
                     }
                 }
                 return true;
             } else {
-                // 滑动（仅列表模式）
                 if (currentState == STATE_BOOK_LIST) {
                     if (Math.abs(dy) > Math.abs(dx)) {
                         int delta = (int) (-dy / LIST_ITEM_HEIGHT);
@@ -365,7 +338,6 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                         int max = Math.max(0, bookNames.size() - maxVisibleItems);
                         if (bookListScrollOffset < 0) bookListScrollOffset = 0;
                         if (bookListScrollOffset > max) bookListScrollOffset = max;
-                        // 四舍五入到整行
                         int remainder = bookListScrollOffset % 1;
                         if (remainder != 0) {
                             bookListScrollOffset = Math.round(bookListScrollOffset);
@@ -429,7 +401,6 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
     private void selectBook(final int index) {
         if (index < 0 || index >= bookIds.size()) return;
         currentBookId = bookIds.get(index);
-        // 读取进度
         String progress = bookManager.getProgress(currentBookId);
         if (progress != null) {
             String[] parts = progress.split(",");
@@ -457,7 +428,6 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         worker.execute(new Runnable() {
             @Override
             public void run() {
-                // 先尝试缓存
                 String content = chapterCache.loadChapter(currentBookId, chapter);
                 if (content != null) {
                     logger.log(Logger.INFO, "从缓存加载第" + chapter + "章");
@@ -465,7 +435,6 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                     return;
                 }
 
-                // 网络加载
                 logger.log(Logger.INFO, "从网络加载第" + chapter + "章");
                 List<ChapterInfo> catalog = apiClient.fetchCatalog(currentBookId);
                 if (catalog == null || catalog.isEmpty()) {
@@ -480,7 +449,6 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                     return;
                 }
 
-                // 找到章节对应的 itemId（章节号从1开始）
                 String itemId = null;
                 if (chapter - 1 < catalog.size()) {
                     itemId = catalog.get(chapter - 1).itemId;
@@ -510,7 +478,6 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                     return;
                 }
 
-                // 缓存
                 chapterCache.saveChapter(currentBookId, chapter, chapterContent);
                 chapterCache.cleanOldChapters(currentBookId, chapter);
                 onChapterLoaded(chapterContent, chapter, page);
@@ -545,10 +512,8 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
             char ch = chapterContent.charAt(i);
             if (ch == '\n') {
                 if (col > 0) {
-                    // 填充剩余格子
-                    col = COLS; // 强制换行
+                    col = COLS;
                 }
-                // 换行
                 row++;
                 col = 0;
                 if (row >= ROWS) {
@@ -576,7 +541,6 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
     }
 
     private void renderPage(int page) {
-        // 清空网格
         for (int r = 0; r < ROWS; r++) {
             for (int c = 0; c < COLS; c++) {
                 grid[r][c] = ' ';
@@ -590,9 +554,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         for (int i = 0; i < chapterContent.length(); i++) {
             char ch = chapterContent.charAt(i);
             if (current == target) {
-                // 填充
                 if (ch == '\n') {
-                    // 填充剩余空格
                     while (col < COLS) {
                         grid[row][col] = ' ';
                         col++;
@@ -610,7 +572,6 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                     }
                 }
             } else {
-                // 模拟分页，不填充
                 if (ch == '\n') {
                     row++;
                     col = 0;
@@ -646,18 +607,14 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
             statusMessage = "第" + currentChapter + "章 " + (currentPage + 1) + "/" + totalPages;
             return;
         }
-        // 尝试下一章
         int nextChapter = currentChapter + 1;
-        // 检查缓存是否存在，或直接加载
         if (chapterCache.hasChapter(currentBookId, nextChapter)) {
-            // 从缓存加载
             String content = chapterCache.loadChapter(currentBookId, nextChapter);
             if (content != null) {
                 onChapterLoaded(content, nextChapter, 0);
                 return;
             }
         }
-        // 网络加载
         loadChapter(nextChapter, 0);
     }
 
@@ -670,15 +627,12 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
             statusMessage = "第" + currentChapter + "章 " + (currentPage + 1) + "/" + totalPages;
             return;
         }
-        // 上一章
         int prevChapter = currentChapter - 1;
         if (prevChapter >= 1) {
-            // 只允许从缓存加载
             if (chapterCache.hasChapter(currentBookId, prevChapter)) {
                 String content = chapterCache.loadChapter(currentBookId, prevChapter);
                 if (content != null) {
-                    // 计算上一章的总页数，跳到最后一页
-                    onChapterLoaded(content, prevChapter, Integer.MAX_VALUE); // 内部会调整到最后一页
+                    onChapterLoaded(content, prevChapter, Integer.MAX_VALUE);
                     return;
                 }
             }
@@ -700,9 +654,8 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         }
     }
 
-    // ======================== 内部类：配置、缓存、API、日志 ========================
+    // ======================== 内部类 ========================
 
-    // ---------- Config ----------
     private static class Config {
         List<String> bookNames;
         List<String> bookIds;
@@ -710,13 +663,10 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         int version;
     }
 
-    // ---------- ConfigManager ----------
     private class ConfigManager {
         Config fetchAndParse() {
-            // 先尝试下载
             String content = downloadConfig();
             if (content == null) {
-                // 读取本地缓存
                 content = readLocalConfig();
             }
             if (content == null) {
@@ -736,7 +686,6 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                 Response response = client.newCall(request).execute();
                 if (response.isSuccessful()) {
                     String body = response.body().string();
-                    // 保存到本地
                     saveLocalConfig(body);
                     return body;
                 }
@@ -816,7 +765,6 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                 }
             }
 
-            // 长度对齐
             int min = Math.min(config.bookNames.size(), config.bookIds.size());
             if (config.bookNames.size() > min) {
                 config.bookNames = config.bookNames.subList(0, min);
@@ -833,7 +781,6 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         }
     }
 
-    // ---------- BookManager ----------
     private class BookManager {
         private final Map<String, String> progressMap = new HashMap<>();
         private boolean loaded = false;
@@ -888,7 +835,6 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         }
     }
 
-    // ---------- ChapterCache ----------
     private class ChapterCache {
         private String getBookDir(String bookId) {
             return BOOKS_DIR + "/" + bookId;
@@ -929,7 +875,6 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                 BufferedWriter writer = new BufferedWriter(new FileWriter(tmp));
                 writer.write(content);
                 writer.close();
-                // 原子重命名
                 File dest = new File(path);
                 if (dest.exists()) dest.delete();
                 if (!tmp.renameTo(dest)) {
@@ -968,19 +913,17 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         }
     }
 
-    // ---------- ApiClient ----------
     private class ApiClient {
         private List<String> apiKeys = new ArrayList<>();
         private int keyIndex = 0;
         private OkHttpClient client;
 
         public ApiClient() {
-            // 启用 TLS 1.2 和明文
             ConnectionSpec spec = new ConnectionSpec.Builder(ConnectionSpec.MODERN_TLS)
                     .tlsVersions(TlsVersion.TLS_1_2)
                     .build();
             client = new OkHttpClient.Builder()
-                    .connectionSpecs(Arrays.asList(spec, ConnectionSpec.CLEARTEXT))
+                    .connectionSpecs(java.util.Arrays.asList(spec, ConnectionSpec.CLEARTEXT))
                     .connectTimeout(15, TimeUnit.SECONDS)
                     .readTimeout(15, TimeUnit.SECONDS)
                     .writeTimeout(15, TimeUnit.SECONDS)
@@ -1031,9 +974,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
             String json = executeGet(url);
             if (json == null) return null;
             try {
-                // 手动 JSON 解析（避免引入依赖）
                 List<ChapterInfo> list = new ArrayList<>();
-                // 简单解析，找 "item_data_list" 数组
                 int start = json.indexOf("\"item_data_list\"");
                 if (start == -1) return null;
                 int arrStart = json.indexOf("[", start);
@@ -1041,7 +982,6 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                 int arrEnd = findMatchingBracket(json, arrStart);
                 if (arrEnd == -1) return null;
                 String arr = json.substring(arrStart + 1, arrEnd);
-                // 分割每个对象
                 int idx = 0;
                 while (true) {
                     int objStart = arr.indexOf("{", idx);
@@ -1073,7 +1013,6 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
             try {
                 String content = extractJsonString(json, "content");
                 if (content == null) return null;
-                // 清洗
                 return cleanContent(content);
             } catch (Exception e) {
                 logger.log(Logger.ERROR, "解析章节内容失败: " + e.toString());
@@ -1082,25 +1021,17 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         }
 
         private String cleanContent(String raw) {
-            // 移除赞助警告
             String warning = "为保证服务质量，免费用户请不要下书！或前往网站赞助后刷新隐藏该提示(赞助用户一天可下载一万章)";
             raw = raw.replace(warning, "");
-            // 替换 </p> 为换行
             raw = raw.replace("</p>", "\n");
-            // 替换 <br> 标签
             raw = raw.replace("<br>", "\n").replace("<br/>", "\n");
-            // 移除所有 HTML 标签
             raw = raw.replaceAll("<[^>]*>", "");
-            // 压缩连续换行
             raw = raw.replaceAll("\n{3,}", "\n\n");
-            // 去除首尾空白
             raw = raw.trim();
-            // 统一换行符
             raw = raw.replace("\r\n", "\n").replace("\r", "\n");
             return raw;
         }
 
-        // 辅助 JSON 解析
         private String extractJsonString(String json, String key) {
             String target = "\"" + key + "\":";
             int pos = json.indexOf(target);
@@ -1128,13 +1059,11 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         }
     }
 
-    // ---------- ChapterInfo ----------
     private static class ChapterInfo {
         String itemId;
         String title;
     }
 
-    // ---------- Logger ----------
     private class Logger {
         public static final String INFO = "INFO";
         public static final String WARN = "WARN";
@@ -1156,7 +1085,6 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         public void log(String level, String msg) {
             String time = new SimpleDateFormat("yyyy-MM-dd-HH:mm:ss", Locale.US).format(new Date());
             String line = "[" + time + "][" + level + "]: " + msg + "\n";
-            // 写入文件
             try {
                 File file = new File(logFile);
                 if (!file.exists()) file.createNewFile();
@@ -1164,10 +1092,8 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                 fw.write(line);
                 fw.close();
             } catch (IOException e) {
-                // 日志写入失败，输出到 Logcat
                 Log.e(TAG, "写入日志失败: " + e.toString());
             }
-            // 同时输出到 Logcat
             switch (level) {
                 case INFO: Log.i(TAG, msg); break;
                 case WARN: Log.w(TAG, msg); break;
