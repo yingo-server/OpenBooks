@@ -41,11 +41,12 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
+import javax.net.ssl.HostnameVerifier;
 import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLSession;
 import javax.net.ssl.SSLSocket;
 import javax.net.ssl.SSLSocketFactory;
 import javax.net.ssl.TrustManager;
-import javax.net.ssl.TrustManagerFactory;
 import javax.net.ssl.X509TrustManager;
 
 import okhttp3.ConnectionSpec;
@@ -144,10 +145,9 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         logger = new Logger();
         logger.log(Logger.INFO, "应用启动");
 
-        // 构建共享的 TLS 1.2 OkHttp 客户端
+        // 构建共享的 TLS 1.2 OkHttp 客户端（不验证证书）
         sharedClient = buildTls12Client();
         if (sharedClient == null) {
-            // 降级方案（可能无效，但保留兼容）
             logger.log(Logger.WARN, "TLS 1.2 客户端构建失败，使用默认客户端（可能失败）");
             sharedClient = new OkHttpClient.Builder()
                     .connectTimeout(60, TimeUnit.SECONDS)
@@ -693,7 +693,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         }
     }
 
-    // ======================== 构建 TLS 1.2 OkHttp 客户端 ========================
+    // ======================== 构建 TLS 1.2 OkHttp 客户端（信任所有证书）=======================
 
     private OkHttpClient buildTls12Client() {
         try {
@@ -716,17 +716,33 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                 logger.log(Logger.INFO, "TLSv1.2 支持: " + hasTls12);
             }
 
-            // 获取系统默认的 TrustManager
-            X509TrustManager trustManager = systemDefaultTrustManager();
+            // 创建不安全的 TrustManager（信任所有证书）
+            X509TrustManager trustAllManager = new X509TrustManager() {
+                @Override
+                public void checkClientTrusted(X509Certificate[] chain, String authType) {}
+                @Override
+                public void checkServerTrusted(X509Certificate[] chain, String authType) {}
+                @Override
+                public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
+            };
 
             // 强制使用 TLSv1.2
             ConnectionSpec spec = new ConnectionSpec.Builder(ConnectionSpec.MODERN_TLS)
                     .tlsVersions(TlsVersion.TLS_1_2)
                     .build();
 
+            // 允许所有主机名
+            HostnameVerifier allowAllHostnames = new HostnameVerifier() {
+                @Override
+                public boolean verify(String hostname, SSLSession session) {
+                    return true;
+                }
+            };
+
             return new OkHttpClient.Builder()
                     .connectionSpecs(Collections.singletonList(spec))
-                    .sslSocketFactory(sslContext.getSocketFactory(), trustManager)
+                    .sslSocketFactory(sslContext.getSocketFactory(), trustAllManager)
+                    .hostnameVerifier(allowAllHostnames)
                     .connectTimeout(60, TimeUnit.SECONDS)
                     .readTimeout(60, TimeUnit.SECONDS)
                     .writeTimeout(60, TimeUnit.SECONDS)
@@ -736,27 +752,6 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
             logger.log(Logger.ERROR, "构建 TLS 1.2 客户端失败: " + e.toString());
             return null;
         }
-    }
-
-    // 获取系统默认的 X509TrustManager
-    private X509TrustManager systemDefaultTrustManager() {
-        try {
-            TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
-            tmf.init((KeyStore) null);
-            for (TrustManager tm : tmf.getTrustManagers()) {
-                if (tm instanceof X509TrustManager) {
-                    return (X509TrustManager) tm;
-                }
-            }
-        } catch (Exception e) {
-            logger.log(Logger.ERROR, "获取系统 TrustManager 失败: " + e.toString());
-        }
-        // 降级：不安全的 TrustManager（仅测试）
-        return new X509TrustManager() {
-            @Override public void checkClientTrusted(X509Certificate[] chain, String authType) {}
-            @Override public void checkServerTrusted(X509Certificate[] chain, String authType) {}
-            @Override public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
-        };
     }
 
     // ======================== 内部类 ========================
