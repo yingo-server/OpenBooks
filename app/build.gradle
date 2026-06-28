@@ -1,4 +1,3 @@
-// 路径: OpenBook/app/build.gradle
 apply plugin: 'com.android.application'
 
 android {
