@@ -42,9 +42,8 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
     private static final String TAG = "OpenBook";
     private static final String CONFIG_URL =
             "https://gitee.com/yingo-server/openbook/raw/master/users/private/0/config.ob";
-    // 使用 CORS 代理
-    private static final String PROXY_BASE = "https://cors.344977.xyz/api?url=";
-    private static final String ORIGIN_API_BASE = "http://v3.rain.ink/fanqie/";
+    private static final String PROXY_BASE = "https://cors.344977.xyz/api?url=";  // 你的 CORS 代理
+    private static final String API_BASE = "http://v3.rain.ink/fanqie/";
     private static final String BASE_DIR = Environment.getExternalStorageDirectory() + "/openbook";
     private static final String CONFIG_DIR = BASE_DIR + "/config/user";
     private static final String CONFIG_FILE = CONFIG_DIR + "/config.ob";
@@ -945,17 +944,22 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
             return key;
         }
 
-        private String httpGet(String urlStr) {
+        private String httpGet(String originalUrl) {
             int attempts = apiKeys.size();
             if (attempts == 0) return null;
             for (int i = 0; i < attempts; i++) {
                 String key = getNextKey();
                 if (key == null) continue;
-                // 构造代理 URL：对原始 URL 进行编码，附加 apikey
-                String originalUrl = urlStr + "&apikey=" + key;
-                String proxyUrl = PROXY_BASE + URLEncoder.encode(originalUrl, "UTF-8");
-                logger.log(Logger.DEBUG, "代理请求: " + proxyUrl);
-
+                // 构建带 apikey 的原始 URL
+                String urlWithKey = originalUrl + "&apikey=" + key;
+                String proxyUrl;
+                try {
+                    proxyUrl = PROXY_BASE + URLEncoder.encode(urlWithKey, "UTF-8");
+                } catch (java.io.UnsupportedEncodingException e) {
+                    logger.log(Logger.ERROR, "URL编码失败: " + e.toString());
+                    return null;
+                }
+                logger.log(Logger.DEBUG, "代理请求URL: " + proxyUrl);
                 HttpURLConnection conn = null;
                 try {
                     URL url = new URL(proxyUrl);
@@ -963,13 +967,12 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                     conn.setConnectTimeout(60000);
                     conn.setReadTimeout(60000);
                     conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36");
-                    conn.setRequestProperty("Accept", "application/json, text/plain, */*");
+                    conn.setRequestProperty("Connection", "close");
                     conn.connect();
 
                     int code = conn.getResponseCode();
                     logger.log(Logger.INFO, "代理响应码: " + code);
                     if (code == 200) {
-                        // 代理可能返回纯文本或 JSON，直接读取
                         BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()));
                         StringBuilder sb = new StringBuilder();
                         String line;
@@ -977,9 +980,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                             sb.append(line);
                         }
                         reader.close();
-                        String body = sb.toString();
-                        logger.log(Logger.INFO, "代理返回内容长度: " + body.length());
-                        return body;
+                        return sb.toString();
                     } else {
                         logger.log(Logger.WARN, "代理请求失败，状态码: " + code + ", Key: " + key.substring(0, 4) + "****");
                     }
@@ -993,7 +994,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         }
 
         public List<ChapterInfo> fetchCatalog(String bookId) {
-            String url = ORIGIN_API_BASE + "?type=3&bookid=" + bookId;
+            String url = API_BASE + "?type=3&bookid=" + bookId;
             String json = httpGet(url);
             if (json == null) return null;
             try {
@@ -1030,7 +1031,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         }
 
         public String fetchChapterContent(String itemId) {
-            String url = ORIGIN_API_BASE + "?type=4&itemid=" + itemId;
+            String url = API_BASE + "?type=4&itemid=" + itemId;
             String json = httpGet(url);
             if (json == null) return null;
             try {
