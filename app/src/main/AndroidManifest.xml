@@ -1,3 +1,4 @@
+<!-- 路径: app/src/main/AndroidManifest.xml -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.openbook.studio">
 
@@ -9,7 +10,9 @@
     <application
         android:allowBackup="false"
         android:label="@string/app_name"
-        android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
+        android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"
+        android:largeHeap="true"
+        android:persistent="true">
         <activity
             android:name=".MainActivity"
             android:configChanges="orientation|keyboardHidden"
