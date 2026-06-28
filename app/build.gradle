@@ -1,3 +1,4 @@
+// 路径: OpenBook/app/build.gradle
 apply plugin: 'com.android.application'
 
 android {
@@ -25,4 +26,6 @@ android {
 dependencies {
     implementation 'com.squareup.okhttp3:okhttp:3.12.13'
     implementation 'com.squareup.okio:okio:1.17.5'
+    // Conscrypt 提供 TLS 1.2 支持（Android 4.4 原生不支持）
+    implementation 'org.conscrypt:conscrypt-android:2.5.2'
 }
