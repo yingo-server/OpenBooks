@@ -30,6 +30,7 @@ import java.security.Security;
 import java.security.cert.X509Certificate;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
@@ -40,9 +41,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
-import javax.net.ssl.HostnameVerifier;
 import javax.net.ssl.SSLContext;
-import javax.net.ssl.SSLSession;
+import javax.net.ssl.SSLSocket;
 import javax.net.ssl.SSLSocketFactory;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.TrustManagerFactory;
@@ -55,6 +55,15 @@ import okhttp3.Response;
 import okhttp3.TlsVersion;
 
 public class MainActivity extends Activity implements SurfaceHolder.Callback, Runnable {
+
+    // ======================== 静态初始化 Conscrypt ========================
+    static {
+        try {
+            Security.insertProviderAt(Conscrypt.newProvider(), 1);
+        } catch (Throwable t) {
+            Log.e("OpenBook", "Conscrypt 注册失败: " + t.toString());
+        }
+    }
 
     // ======================== 常量 ========================
     private static final String TAG = "OpenBook";
@@ -113,6 +122,9 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
     private ApiClient apiClient;
     private Logger logger;
 
+    // ======================== 共享 OkHttp 客户端 ========================
+    private OkHttpClient sharedClient;
+
     // ======================== 线程 ========================
     private ExecutorService worker = Executors.newSingleThreadExecutor();
     private Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -131,10 +143,24 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
 
         logger = new Logger();
         logger.log(Logger.INFO, "应用启动");
-        configManager = new ConfigManager();
+
+        // 构建共享的 TLS 1.2 OkHttp 客户端
+        sharedClient = buildTls12Client();
+        if (sharedClient == null) {
+            // 降级方案（可能无效，但保留兼容）
+            logger.log(Logger.WARN, "TLS 1.2 客户端构建失败，使用默认客户端（可能失败）");
+            sharedClient = new OkHttpClient.Builder()
+                    .connectTimeout(60, TimeUnit.SECONDS)
+                    .readTimeout(60, TimeUnit.SECONDS)
+                    .writeTimeout(60, TimeUnit.SECONDS)
+                    .retryOnConnectionFailure(true)
+                    .build();
+        }
+
+        configManager = new ConfigManager(sharedClient);
         bookManager = new BookManager();
         chapterCache = new ChapterCache();
-        apiClient = new ApiClient();
+        apiClient = new ApiClient(sharedClient);
 
         mainHandler.postDelayed(new Runnable() {
             @Override
@@ -667,6 +693,72 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         }
     }
 
+    // ======================== 构建 TLS 1.2 OkHttp 客户端 ========================
+
+    private OkHttpClient buildTls12Client() {
+        try {
+            // 使用 Conscrypt 的 SSLContext
+            SSLContext sslContext = SSLContext.getInstance("TLSv1.2", "Conscrypt");
+            sslContext.init(null, null, null);
+
+            // 调试：打印支持的协议
+            SSLSocket testSocket = (SSLSocket) sslContext.getSocketFactory().createSocket();
+            String[] protocols = testSocket.getSupportedProtocols();
+            logger.log(Logger.DEBUG, "Supported protocols: " + Arrays.toString(protocols));
+            if (protocols != null) {
+                boolean hasTls12 = false;
+                for (String p : protocols) {
+                    if ("TLSv1.2".equals(p)) {
+                        hasTls12 = true;
+                        break;
+                    }
+                }
+                logger.log(Logger.INFO, "TLSv1.2 支持: " + hasTls12);
+            }
+
+            // 获取系统默认的 TrustManager
+            X509TrustManager trustManager = systemDefaultTrustManager();
+
+            // 强制使用 TLSv1.2
+            ConnectionSpec spec = new ConnectionSpec.Builder(ConnectionSpec.MODERN_TLS)
+                    .tlsVersions(TlsVersion.TLS_1_2)
+                    .build();
+
+            return new OkHttpClient.Builder()
+                    .connectionSpecs(Collections.singletonList(spec))
+                    .sslSocketFactory(sslContext.getSocketFactory(), trustManager)
+                    .connectTimeout(60, TimeUnit.SECONDS)
+                    .readTimeout(60, TimeUnit.SECONDS)
+                    .writeTimeout(60, TimeUnit.SECONDS)
+                    .retryOnConnectionFailure(true)
+                    .build();
+        } catch (Exception e) {
+            logger.log(Logger.ERROR, "构建 TLS 1.2 客户端失败: " + e.toString());
+            return null;
+        }
+    }
+
+    // 获取系统默认的 X509TrustManager
+    private X509TrustManager systemDefaultTrustManager() {
+        try {
+            TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+            tmf.init((KeyStore) null);
+            for (TrustManager tm : tmf.getTrustManagers()) {
+                if (tm instanceof X509TrustManager) {
+                    return (X509TrustManager) tm;
+                }
+            }
+        } catch (Exception e) {
+            logger.log(Logger.ERROR, "获取系统 TrustManager 失败: " + e.toString());
+        }
+        // 降级：不安全的 TrustManager（仅测试）
+        return new X509TrustManager() {
+            @Override public void checkClientTrusted(X509Certificate[] chain, String authType) {}
+            @Override public void checkServerTrusted(X509Certificate[] chain, String authType) {}
+            @Override public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
+        };
+    }
+
     // ======================== 内部类 ========================
 
     private static class Config {
@@ -677,6 +769,12 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
     }
 
     private class ConfigManager {
+        private OkHttpClient client;
+
+        public ConfigManager(OkHttpClient client) {
+            this.client = client;
+        }
+
         Config fetchAndParse() {
             String content = downloadConfig();
             if (content == null) {
@@ -691,28 +789,20 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
 
         private String downloadConfig() {
             try {
-                URL url = new URL(CONFIG_URL);
-                java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
-                conn.setConnectTimeout(15000);
-                conn.setReadTimeout(15000);
-                conn.setRequestProperty("User-Agent", "Mozilla/5.0");
-                conn.connect();
-                int code = conn.getResponseCode();
-                logger.log(Logger.INFO, "配置下载响应码: " + code);
-                if (code == 200) {
-                    BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()));
-                    StringBuilder sb = new StringBuilder();
-                    String line;
-                    while ((line = reader.readLine()) != null) {
-                        sb.append(line).append("\n");
-                    }
-                    reader.close();
-                    String body = sb.toString();
+                Request request = new Request.Builder()
+                        .url(CONFIG_URL)
+                        .header("User-Agent", "Mozilla/5.0")
+                        .build();
+                Response response = client.newCall(request).execute();
+                if (response.isSuccessful()) {
+                    String body = response.body().string();
+                    response.close();
                     logger.log(Logger.INFO, "配置下载成功，内容长度: " + body.length());
                     saveLocalConfig(body);
                     return body;
                 } else {
-                    logger.log(Logger.ERROR, "配置下载失败，响应码: " + code);
+                    logger.log(Logger.ERROR, "配置下载失败，响应码: " + response.code());
+                    response.close();
                 }
             } catch (Exception e) {
                 logger.log(Logger.ERROR, "下载配置异常: " + e.toString());
@@ -950,77 +1040,8 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         private int keyIndex = 0;
         private OkHttpClient client;
 
-        public ApiClient() {
-            buildTls12Client();
-        }
-
-        private void buildTls12Client() {
-            try {
-                // 1. 注册 Conscrypt 作为安全提供者（如果尚未注册）
-                if (Security.getProvider("Conscrypt") == null) {
-                    Security.insertProviderAt(Conscrypt.newProvider(), 1);
-                }
-
-                // 2. 使用 Conscrypt 的 SSLContext，明确指定 TLSv1.2
-                SSLContext sslContext = SSLContext.getInstance("TLSv1.2", "Conscrypt");
-                sslContext.init(null, null, null);
-
-                // 3. 获取系统默认的 TrustManager（用于证书校验）
-                X509TrustManager trustManager = systemDefaultTrustManager();
-
-                // 4. 构建 ConnectionSpec，强制 TLSv1.2
-                ConnectionSpec spec = new ConnectionSpec.Builder(ConnectionSpec.MODERN_TLS)
-                        .tlsVersions(TlsVersion.TLS_1_2)
-                        .build();
-
-                // 5. 创建 OkHttpClient
-                client = new OkHttpClient.Builder()
-                        .connectionSpecs(Collections.singletonList(spec))
-                        .sslSocketFactory(sslContext.getSocketFactory(), trustManager)
-                        .hostnameVerifier(new HostnameVerifier() {
-                            @Override
-                            public boolean verify(String hostname, SSLSession session) {
-                                // 生产环境应使用 OkHostnameVerifier.INSTANCE
-                                // 这里为测试环境放行
-                                return true;
-                            }
-                        })
-                        .connectTimeout(60, TimeUnit.SECONDS)
-                        .readTimeout(60, TimeUnit.SECONDS)
-                        .writeTimeout(60, TimeUnit.SECONDS)
-                        .retryOnConnectionFailure(true)
-                        .build();
-            } catch (Exception e) {
-                logger.log(Logger.ERROR, "Conscrypt TLS 1.2 配置失败: " + e.toString());
-                // 降级到默认客户端（很可能失败，但保留兼容）
-                client = new OkHttpClient.Builder()
-                        .connectTimeout(60, TimeUnit.SECONDS)
-                        .readTimeout(60, TimeUnit.SECONDS)
-                        .writeTimeout(60, TimeUnit.SECONDS)
-                        .retryOnConnectionFailure(true)
-                        .build();
-            }
-        }
-
-        // 获取系统默认的 X509TrustManager（保持证书校验）
-        private X509TrustManager systemDefaultTrustManager() {
-            try {
-                TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
-                tmf.init((KeyStore) null);
-                for (TrustManager tm : tmf.getTrustManagers()) {
-                    if (tm instanceof X509TrustManager) {
-                        return (X509TrustManager) tm;
-                    }
-                }
-            } catch (Exception e) {
-                logger.log(Logger.ERROR, "获取系统 TrustManager 失败: " + e.toString());
-            }
-            // 降级：使用不安全的 TrustManager（仅测试用）
-            return new X509TrustManager() {
-                @Override public void checkClientTrusted(X509Certificate[] chain, String authType) {}
-                @Override public void checkServerTrusted(X509Certificate[] chain, String authType) {}
-                @Override public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
-            };
+        public ApiClient(OkHttpClient client) {
+            this.client = client;
         }
 
         public void setApiKeys(List<String> keys) {
