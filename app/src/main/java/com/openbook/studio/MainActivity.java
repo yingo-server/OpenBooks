@@ -16,6 +16,8 @@ import android.view.SurfaceView;
 import android.view.WindowManager;
 
 import org.conscrypt.Conscrypt;
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
@@ -78,14 +80,10 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
     private static final String BOOKS_DIR = BASE_DIR + "/books";
     private static final String LOG_DIR = BASE_DIR + "/logs";
     private static final int MAX_CACHED_CHAPTERS = 3;
-    private static final int FONT_SIZE = 40;
-    private static final int COLS = 6;
-    private static final int ROWS = 6;
-    private static final int STATUS_HEIGHT = 28;
-    private static final int BOTTOM_HEIGHT = 42;
-    private static final int CONTENT_TOP = STATUS_HEIGHT;
-    private static final int CONTENT_BOTTOM = 240 - BOTTOM_HEIGHT;
-    private static final int LIST_ITEM_HEIGHT = 48;
+    // 8x8 网格
+    private static final int COLS = 8;
+    private static final int ROWS = 8;
+    private static final int FONT_SIZE = 28; // 适配 8x8
     private static final long LONG_PRESS_DURATION = 1500;
     private static final int TOUCH_SLOP = 10;
 
@@ -145,7 +143,6 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         logger = new Logger();
         logger.log(Logger.INFO, "应用启动");
 
-        // 构建共享的 TLS 1.2 OkHttp 客户端（不验证证书）
         sharedClient = buildTls12Client();
         if (sharedClient == null) {
             logger.log(Logger.WARN, "TLS 1.2 客户端构建失败，使用默认客户端（可能失败）");
@@ -242,41 +239,17 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         }
     }
 
-    // ======================== UI 绘制 ========================
+    // ======================== UI 绘制（精简版，无状态栏/底部栏）=======================
 
     private Paint bgPaint = new Paint();
     private Paint textPaint = new Paint();
-    private Paint statusPaint = new Paint();
-    private Paint bottomPaint = new Paint();
+    private Paint listTextPaint = new Paint();
+    private Paint pageInfoPaint = new Paint();
 
     private void drawUI(Canvas canvas) {
+        // 全屏纯黑背景
         bgPaint.setColor(Color.BLACK);
         canvas.drawRect(0, 0, 240, 240, bgPaint);
-
-        statusPaint.setColor(Color.DKGRAY);
-        canvas.drawRect(0, 0, 240, STATUS_HEIGHT, statusPaint);
-        statusPaint.setColor(Color.WHITE);
-        statusPaint.setTextSize(20);
-        statusPaint.setAntiAlias(true);
-        String left = "OpenBook";
-        String right = statusMessage.isEmpty() ? (currentState == STATE_BOOK_LIST ? "选择书籍" : "阅读中") : statusMessage;
-        canvas.drawText(left, 4, STATUS_HEIGHT - 6, statusPaint);
-        float rightWidth = statusPaint.measureText(right);
-        canvas.drawText(right, 240 - rightWidth - 4, STATUS_HEIGHT - 6, statusPaint);
-
-        bottomPaint.setColor(Color.DKGRAY);
-        canvas.drawRect(0, 240 - BOTTOM_HEIGHT, 240, 240, bottomPaint);
-        bottomPaint.setColor(Color.WHITE);
-        bottomPaint.setTextSize(18);
-        bottomPaint.setAntiAlias(true);
-        String bottomText = "";
-        if (currentState == STATE_BOOK_LIST) {
-            bottomText = "滑动列表 点击选择";
-        } else {
-            bottomText = "左半屏上一面  右半屏下一面  长按退出";
-        }
-        float bottomWidth = bottomPaint.measureText(bottomText);
-        canvas.drawText(bottomText, (240 - bottomWidth) / 2, 240 - 10, bottomPaint);
 
         if (currentState == STATE_BOOK_LIST) {
             drawBookList(canvas);
@@ -286,12 +259,12 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
     }
 
     private void drawBookList(Canvas canvas) {
-        textPaint.setColor(Color.WHITE);
-        textPaint.setTextSize(28);
-        textPaint.setAntiAlias(true);
+        listTextPaint.setColor(Color.WHITE);
+        listTextPaint.setTextSize(28);
+        listTextPaint.setAntiAlias(true);
 
         int visible = Math.min(bookNames.size() - bookListScrollOffset,
-                (CONTENT_BOTTOM - CONTENT_TOP) / LIST_ITEM_HEIGHT);
+                240 / 48); // 约5项
         if (visible < 0) visible = 0;
         maxVisibleItems = visible;
 
@@ -299,10 +272,10 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
             int idx = bookListScrollOffset + i;
             if (idx >= bookNames.size()) break;
             String name = bookNames.get(idx);
-            int y = CONTENT_TOP + i * LIST_ITEM_HEIGHT + LIST_ITEM_HEIGHT - 8;
-            canvas.drawText(name, 8, y, textPaint);
-            canvas.drawLine(0, CONTENT_TOP + i * LIST_ITEM_HEIGHT + LIST_ITEM_HEIGHT,
-                    240, CONTENT_TOP + i * LIST_ITEM_HEIGHT + LIST_ITEM_HEIGHT, textPaint);
+            int y = i * 48 + 48 - 8;
+            canvas.drawText(name, 8, y, listTextPaint);
+            // 分隔线
+            canvas.drawLine(0, i * 48 + 48, 240, i * 48 + 48, listTextPaint);
         }
     }
 
@@ -310,20 +283,24 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         textPaint.setColor(Color.WHITE);
         textPaint.setTextSize(FONT_SIZE);
         textPaint.setAntiAlias(true);
+        int totalWidth = COLS * FONT_SIZE;
+        int startX = (240 - totalWidth) / 2; // 居中
+        int startY = (240 - ROWS * FONT_SIZE) / 2;
         for (int r = 0; r < ROWS; r++) {
             for (int c = 0; c < COLS; c++) {
                 char ch = grid[r][c];
                 if (ch == 0) ch = ' ';
-                float x = c * FONT_SIZE + 4;
-                float y = CONTENT_TOP + r * FONT_SIZE + FONT_SIZE - 4;
+                float x = startX + c * FONT_SIZE;
+                float y = startY + r * FONT_SIZE + FONT_SIZE - 4;
                 canvas.drawText(String.valueOf(ch), x, y, textPaint);
             }
         }
-        bottomPaint.setColor(Color.GRAY);
-        bottomPaint.setTextSize(16);
+        // 页码信息显示在右下角（半透明）
+        pageInfoPaint.setColor(Color.argb(128, 255, 255, 255));
+        pageInfoPaint.setTextSize(16);
         String pageInfo = currentChapter + "  " + (currentPage + 1) + "/" + totalPages;
-        float w = bottomPaint.measureText(pageInfo);
-        canvas.drawText(pageInfo, 240 - w - 4, CONTENT_BOTTOM - 4, bottomPaint);
+        float w = pageInfoPaint.measureText(pageInfo);
+        canvas.drawText(pageInfo, 240 - w - 4, 240 - 8, pageInfoPaint);
     }
 
     // ======================== 触摸事件 ========================
@@ -347,8 +324,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
             float dist = (float) Math.sqrt(dx * dx + dy * dy);
             long elapsed = upTime - downTime;
 
-            if (downY < STATUS_HEIGHT || downY > CONTENT_BOTTOM) return false;
-
+            // 长按退出
             if (elapsed >= LONG_PRESS_DURATION) {
                 if (currentState == STATE_READING) {
                     currentState = STATE_BOOK_LIST;
@@ -359,13 +335,14 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
             }
 
             if (dist < TOUCH_SLOP) {
+                // 点击
                 if (currentState == STATE_BOOK_LIST) {
-                    int relY = (int) (downY - CONTENT_TOP);
-                    int index = bookListScrollOffset + relY / LIST_ITEM_HEIGHT;
+                    int index = (int) (downY / 48);
                     if (index >= 0 && index < bookNames.size()) {
                         selectBook(index);
                     }
                 } else {
+                    // 阅读模式：左右半屏翻页
                     if (upX < 120) {
                         turnPrevious();
                     } else {
@@ -374,9 +351,10 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                 }
                 return true;
             } else {
+                // 滑动（仅在书籍列表模式）
                 if (currentState == STATE_BOOK_LIST) {
                     if (Math.abs(dy) > Math.abs(dx)) {
-                        int delta = (int) (-dy / LIST_ITEM_HEIGHT);
+                        int delta = (int) (-dy / 48);
                         bookListScrollOffset += delta;
                         int max = Math.max(0, bookNames.size() - maxVisibleItems);
                         if (bookListScrollOffset < 0) bookListScrollOffset = 0;
@@ -551,7 +529,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
             char ch = chapterContent.charAt(i);
             if (ch == '\n') {
                 if (col > 0) {
-                    col = COLS;
+                    col = COLS; // 强制换行
                 }
                 row++;
                 col = 0;
@@ -693,28 +671,20 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         }
     }
 
-    // ======================== 构建 TLS 1.2 OkHttp 客户端（信任所有证书）=======================
+    // ======================== 构建 TLS 1.2 OkHttp 客户端 ========================
 
     private OkHttpClient buildTls12Client() {
         try {
-            // 1. 创建 TrustManager，信任所有证书
             final X509TrustManager trustAllManager = new X509TrustManager() {
-                @Override
-                public void checkClientTrusted(X509Certificate[] chain, String authType) {}
-                @Override
-                public void checkServerTrusted(X509Certificate[] chain, String authType) {}
-                @Override
-                public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
+                @Override public void checkClientTrusted(X509Certificate[] chain, String authType) {}
+                @Override public void checkServerTrusted(X509Certificate[] chain, String authType) {}
+                @Override public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
             };
 
-            // 2. 创建 SSLContext，并用上面的 TrustManager 初始化
             SSLContext sslContext = SSLContext.getInstance("TLSv1.2", "Conscrypt");
             sslContext.init(null, new TrustManager[]{trustAllManager}, new java.security.SecureRandom());
-
-            // 3. 从同一个 SSLContext 获取 SSLSocketFactory
             SSLSocketFactory sslSocketFactory = sslContext.getSocketFactory();
 
-            // 4. 调试：打印支持的协议
             SSLSocket testSocket = (SSLSocket) sslSocketFactory.createSocket();
             String[] protocols = testSocket.getSupportedProtocols();
             logger.log(Logger.DEBUG, "Supported protocols: " + Arrays.toString(protocols));
@@ -729,29 +699,23 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                 logger.log(Logger.INFO, "TLSv1.2 支持: " + hasTls12);
             }
 
-            // 5. 强制使用 TLSv1.2
             ConnectionSpec spec = new ConnectionSpec.Builder(ConnectionSpec.MODERN_TLS)
                     .tlsVersions(TlsVersion.TLS_1_2)
                     .build();
 
-            // 6. 允许所有主机名
-            HostnameVerifier allowAllHostnames = new HostnameVerifier() {
-                @Override
-                public boolean verify(String hostname, SSLSession session) {
-                    return true;
-                }
+            HostnameVerifier allowAll = new HostnameVerifier() {
+                @Override public boolean verify(String hostname, SSLSession session) { return true; }
             };
 
             return new OkHttpClient.Builder()
                     .connectionSpecs(Collections.singletonList(spec))
-                    .sslSocketFactory(sslSocketFactory, trustAllManager)  // 使用同一个 SSLContext 生成的 TrustManager
-                    .hostnameVerifier(allowAllHostnames)
+                    .sslSocketFactory(sslSocketFactory, trustAllManager)
+                    .hostnameVerifier(allowAll)
                     .connectTimeout(60, TimeUnit.SECONDS)
                     .readTimeout(60, TimeUnit.SECONDS)
                     .writeTimeout(60, TimeUnit.SECONDS)
                     .retryOnConnectionFailure(true)
                     .build();
-
         } catch (Exception e) {
             logger.log(Logger.ERROR, "构建 TLS 1.2 客户端失败: " + e.toString());
             return null;
@@ -769,16 +733,11 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
 
     private class ConfigManager {
         private OkHttpClient client;
-
-        public ConfigManager(OkHttpClient client) {
-            this.client = client;
-        }
+        public ConfigManager(OkHttpClient client) { this.client = client; }
 
         Config fetchAndParse() {
             String content = downloadConfig();
-            if (content == null) {
-                content = readLocalConfig();
-            }
+            if (content == null) content = readLocalConfig();
             if (content == null) {
                 logger.log(Logger.ERROR, "配置获取失败");
                 return null;
@@ -1092,32 +1051,21 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
             String json = httpGet(url);
             if (json == null) return null;
             try {
-                List<ChapterInfo> list = new ArrayList<>();
-                int start = json.indexOf("\"item_data_list\"");
-                if (start == -1) return null;
-                int arrStart = json.indexOf("[", start);
-                if (arrStart == -1) return null;
-                int arrEnd = findMatchingBracket(json, arrStart);
-                if (arrEnd == -1) return null;
-                String arr = json.substring(arrStart + 1, arrEnd);
-                int idx = 0;
-                while (true) {
-                    int objStart = arr.indexOf("{", idx);
-                    if (objStart == -1) break;
-                    int objEnd = findMatchingBracket(arr, objStart);
-                    if (objEnd == -1) break;
-                    String obj = arr.substring(objStart + 1, objEnd);
-                    String itemId = extractJsonString(obj, "item_id");
-                    String title = extractJsonString(obj, "title");
-                    if (itemId != null && title != null) {
-                        ChapterInfo info = new ChapterInfo();
-                        info.itemId = itemId;
-                        info.title = title;
-                        list.add(info);
-                    }
-                    idx = objEnd + 1;
+                JSONObject root = new JSONObject(json);
+                if (root.optInt("code", -1) != 0) {
+                    logger.log(Logger.ERROR, "目录API返回错误码");
+                    return null;
                 }
-                return list;
+                JSONArray list = root.getJSONObject("data").getJSONArray("item_data_list");
+                List<ChapterInfo> result = new ArrayList<>();
+                for (int i = 0; i < list.length(); i++) {
+                    JSONObject item = list.getJSONObject(i);
+                    ChapterInfo info = new ChapterInfo();
+                    info.itemId = item.getString("item_id");
+                    info.title = item.getString("title");
+                    result.add(info);
+                }
+                return result;
             } catch (Exception e) {
                 logger.log(Logger.ERROR, "解析目录JSON失败: " + e.toString());
                 return null;
@@ -1129,8 +1077,12 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
             String json = httpGet(url);
             if (json == null) return null;
             try {
-                String content = extractJsonString(json, "content");
-                if (content == null) return null;
+                JSONObject root = new JSONObject(json);
+                if (!"0".equals(root.optString("code"))) {
+                    logger.log(Logger.ERROR, "章节内容API返回错误码");
+                    return null;
+                }
+                String content = root.getJSONObject("data").getString("content");
                 return cleanContent(content);
             } catch (Exception e) {
                 logger.log(Logger.ERROR, "解析章节内容失败: " + e.toString());
@@ -1148,32 +1100,6 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
             raw = raw.trim();
             raw = raw.replace("\r\n", "\n").replace("\r", "\n");
             return raw;
-        }
-
-        private String extractJsonString(String json, String key) {
-            String target = "\"" + key + "\":";
-            int pos = json.indexOf(target);
-            if (pos == -1) return null;
-            int start = json.indexOf("\"", pos + target.length());
-            if (start == -1) return null;
-            int end = json.indexOf("\"", start + 1);
-            if (end == -1) return null;
-            return json.substring(start + 1, end);
-        }
-
-        private int findMatchingBracket(String s, int open) {
-            char c = s.charAt(open);
-            char close = (c == '[') ? ']' : '}';
-            int count = 1;
-            for (int i = open + 1; i < s.length(); i++) {
-                char ch = s.charAt(i);
-                if (ch == c) count++;
-                else if (ch == close) {
-                    count--;
-                    if (count == 0) return i;
-                }
-            }
-            return -1;
         }
     }
 
