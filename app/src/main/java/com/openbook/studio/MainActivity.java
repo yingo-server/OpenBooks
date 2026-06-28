@@ -23,6 +23,7 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
@@ -33,9 +34,11 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
+import okhttp3.ConnectionSpec;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
+import okhttp3.TlsVersion;
 
 public class MainActivity extends Activity implements SurfaceHolder.Callback, Runnable {
 
@@ -43,6 +46,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
     private static final String TAG = "OpenBook";
     private static final String CONFIG_URL =
             "https://gitee.com/yingo-server/openbook/raw/master/users/private/0/config.ob";
+    private static final String API_BASE = "https://v3.rain.ink/fanqie/";  // 改为 HTTPS
     private static final String BASE_DIR = Environment.getExternalStorageDirectory() + "/openbook";
     private static final String CONFIG_DIR = BASE_DIR + "/config/user";
     private static final String CONFIG_FILE = CONFIG_DIR + "/config.ob";
@@ -930,8 +934,13 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         private OkHttpClient client;
 
         public ApiClient() {
-            // 宽松配置，兼容所有协议，增加超时
+            // 宽松 TLS 配置，兼容 Android 4.4
+            ConnectionSpec spec = new ConnectionSpec.Builder(ConnectionSpec.COMPATIBLE_TLS)
+                    .allEnabledTlsVersions()
+                    .allEnabledCipherSuites()
+                    .build();
             client = new OkHttpClient.Builder()
+                    .connectionSpecs(Arrays.asList(spec, ConnectionSpec.CLEARTEXT))
                     .connectTimeout(30, TimeUnit.SECONDS)
                     .readTimeout(30, TimeUnit.SECONDS)
                     .writeTimeout(30, TimeUnit.SECONDS)
@@ -978,7 +987,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         }
 
         public List<ChapterInfo> fetchCatalog(String bookId) {
-            String url = "http://v3.rain.ink/fanqie/?type=3&bookid=" + bookId;
+            String url = API_BASE + "?type=3&bookid=" + bookId;
             String json = executeGet(url);
             if (json == null) return null;
             try {
@@ -1015,7 +1024,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         }
 
         public String fetchChapterContent(String itemId) {
-            String url = "http://v3.rain.ink/fanqie/?type=4&itemid=" + itemId;
+            String url = API_BASE + "?type=4&itemid=" + itemId;
             String json = executeGet(url);
             if (json == null) return null;
             try {
