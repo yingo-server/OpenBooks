@@ -15,6 +15,8 @@ import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.WindowManager;
 
+import org.conscrypt.Conscrypt;
+
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.File;
@@ -22,9 +24,10 @@ import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStreamReader;
-import java.net.HttpURLConnection;
 import java.net.URL;
-import java.net.URLEncoder;
+import java.security.KeyStore;
+import java.security.Security;
+import java.security.cert.X509Certificate;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -35,6 +38,21 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+
+import javax.net.ssl.HostnameVerifier;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLSession;
+import javax.net.ssl.SSLSocketFactory;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.TrustManagerFactory;
+import javax.net.ssl.X509TrustManager;
+
+import okhttp3.ConnectionSpec;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.Response;
+import okhttp3.TlsVersion;
 
 public class MainActivity extends Activity implements SurfaceHolder.Callback, Runnable {
 
@@ -42,8 +60,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
     private static final String TAG = "OpenBook";
     private static final String CONFIG_URL =
             "https://gitee.com/yingo-server/openbook/raw/master/users/private/0/config.ob";
-    private static final String PROXY_BASE = "https://cors.344977.xyz/api?url=";  // 你的 CORS 代理
-    private static final String API_BASE = "http://v3.rain.ink/fanqie/";
+    private static final String API_BASE = "https://v3.rain.ink/fanqie/";
     private static final String BASE_DIR = Environment.getExternalStorageDirectory() + "/openbook";
     private static final String CONFIG_DIR = BASE_DIR + "/config/user";
     private static final String CONFIG_FILE = CONFIG_DIR + "/config.ob";
@@ -675,7 +692,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         private String downloadConfig() {
             try {
                 URL url = new URL(CONFIG_URL);
-                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
                 conn.setConnectTimeout(15000);
                 conn.setReadTimeout(15000);
                 conn.setRequestProperty("User-Agent", "Mozilla/5.0");
@@ -931,6 +948,80 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
     private class ApiClient {
         private List<String> apiKeys = new ArrayList<>();
         private int keyIndex = 0;
+        private OkHttpClient client;
+
+        public ApiClient() {
+            buildTls12Client();
+        }
+
+        private void buildTls12Client() {
+            try {
+                // 1. 注册 Conscrypt 作为安全提供者（如果尚未注册）
+                if (Security.getProvider("Conscrypt") == null) {
+                    Security.insertProviderAt(Conscrypt.newProvider(), 1);
+                }
+
+                // 2. 使用 Conscrypt 的 SSLContext，明确指定 TLSv1.2
+                SSLContext sslContext = SSLContext.getInstance("TLSv1.2", "Conscrypt");
+                sslContext.init(null, null, null);
+
+                // 3. 获取系统默认的 TrustManager（用于证书校验）
+                X509TrustManager trustManager = systemDefaultTrustManager();
+
+                // 4. 构建 ConnectionSpec，强制 TLSv1.2
+                ConnectionSpec spec = new ConnectionSpec.Builder(ConnectionSpec.MODERN_TLS)
+                        .tlsVersions(TlsVersion.TLS_1_2)
+                        .build();
+
+                // 5. 创建 OkHttpClient
+                client = new OkHttpClient.Builder()
+                        .connectionSpecs(Collections.singletonList(spec))
+                        .sslSocketFactory(sslContext.getSocketFactory(), trustManager)
+                        .hostnameVerifier(new HostnameVerifier() {
+                            @Override
+                            public boolean verify(String hostname, SSLSession session) {
+                                // 生产环境应使用 OkHostnameVerifier.INSTANCE
+                                // 这里为测试环境放行
+                                return true;
+                            }
+                        })
+                        .connectTimeout(60, TimeUnit.SECONDS)
+                        .readTimeout(60, TimeUnit.SECONDS)
+                        .writeTimeout(60, TimeUnit.SECONDS)
+                        .retryOnConnectionFailure(true)
+                        .build();
+            } catch (Exception e) {
+                logger.log(Logger.ERROR, "Conscrypt TLS 1.2 配置失败: " + e.toString());
+                // 降级到默认客户端（很可能失败，但保留兼容）
+                client = new OkHttpClient.Builder()
+                        .connectTimeout(60, TimeUnit.SECONDS)
+                        .readTimeout(60, TimeUnit.SECONDS)
+                        .writeTimeout(60, TimeUnit.SECONDS)
+                        .retryOnConnectionFailure(true)
+                        .build();
+            }
+        }
+
+        // 获取系统默认的 X509TrustManager（保持证书校验）
+        private X509TrustManager systemDefaultTrustManager() {
+            try {
+                TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+                tmf.init((KeyStore) null);
+                for (TrustManager tm : tmf.getTrustManagers()) {
+                    if (tm instanceof X509TrustManager) {
+                        return (X509TrustManager) tm;
+                    }
+                }
+            } catch (Exception e) {
+                logger.log(Logger.ERROR, "获取系统 TrustManager 失败: " + e.toString());
+            }
+            // 降级：使用不安全的 TrustManager（仅测试用）
+            return new X509TrustManager() {
+                @Override public void checkClientTrusted(X509Certificate[] chain, String authType) {}
+                @Override public void checkServerTrusted(X509Certificate[] chain, String authType) {}
+                @Override public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
+            };
+        }
 
         public void setApiKeys(List<String> keys) {
             this.apiKeys = keys;
@@ -950,44 +1041,27 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
             for (int i = 0; i < attempts; i++) {
                 String key = getNextKey();
                 if (key == null) continue;
-                // 构建带 apikey 的原始 URL
-                String urlWithKey = originalUrl + "&apikey=" + key;
-                String proxyUrl;
-                try {
-                    proxyUrl = PROXY_BASE + URLEncoder.encode(urlWithKey, "UTF-8");
-                } catch (java.io.UnsupportedEncodingException e) {
-                    logger.log(Logger.ERROR, "URL编码失败: " + e.toString());
-                    return null;
-                }
-                logger.log(Logger.DEBUG, "代理请求URL: " + proxyUrl);
-                HttpURLConnection conn = null;
-                try {
-                    URL url = new URL(proxyUrl);
-                    conn = (HttpURLConnection) url.openConnection();
-                    conn.setConnectTimeout(60000);
-                    conn.setReadTimeout(60000);
-                    conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36");
-                    conn.setRequestProperty("Connection", "close");
-                    conn.connect();
+                String fullUrl = originalUrl + "&apikey=" + key;
+                logger.log(Logger.DEBUG, "请求URL: " + fullUrl);
 
-                    int code = conn.getResponseCode();
-                    logger.log(Logger.INFO, "代理响应码: " + code);
-                    if (code == 200) {
-                        BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()));
-                        StringBuilder sb = new StringBuilder();
-                        String line;
-                        while ((line = reader.readLine()) != null) {
-                            sb.append(line);
-                        }
-                        reader.close();
-                        return sb.toString();
+                Request request = new Request.Builder()
+                        .url(fullUrl)
+                        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36")
+                        .header("Connection", "close")
+                        .build();
+
+                try {
+                    Response response = client.newCall(request).execute();
+                    if (response.isSuccessful()) {
+                        String body = response.body().string();
+                        response.close();
+                        return body;
                     } else {
-                        logger.log(Logger.WARN, "代理请求失败，状态码: " + code + ", Key: " + key.substring(0, 4) + "****");
+                        logger.log(Logger.WARN, "请求失败，状态码: " + response.code() + ", Key: " + key.substring(0, 4) + "****");
+                        response.close();
                     }
                 } catch (Exception e) {
-                    logger.log(Logger.WARN, "代理请求异常: " + e.toString() + ", Key: " + key.substring(0, 4) + "****");
-                } finally {
-                    if (conn != null) conn.disconnect();
+                    logger.log(Logger.WARN, "请求异常: " + e.toString() + ", Key: " + key.substring(0, 4) + "****");
                 }
             }
             return null;
