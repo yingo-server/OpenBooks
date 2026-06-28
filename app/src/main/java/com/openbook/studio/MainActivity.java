@@ -23,7 +23,6 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
@@ -34,11 +33,9 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
-import okhttp3.ConnectionSpec;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
-import okhttp3.TlsVersion;
 
 public class MainActivity extends Activity implements SurfaceHolder.Callback, Runnable {
 
@@ -46,7 +43,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
     private static final String TAG = "OpenBook";
     private static final String CONFIG_URL =
             "https://gitee.com/yingo-server/openbook/raw/master/users/private/0/config.ob";
-    private static final String API_BASE = "https://v3.rain.ink/fanqie/";  // 改为 HTTPS
+    private static final String API_BASE = "http://v3.rain.ink/fanqie/";  // 使用 HTTP
     private static final String BASE_DIR = Environment.getExternalStorageDirectory() + "/openbook";
     private static final String CONFIG_DIR = BASE_DIR + "/config/user";
     private static final String CONFIG_FILE = CONFIG_DIR + "/config.ob";
@@ -934,16 +931,11 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         private OkHttpClient client;
 
         public ApiClient() {
-            // 宽松 TLS 配置，兼容 Android 4.4
-            ConnectionSpec spec = new ConnectionSpec.Builder(ConnectionSpec.COMPATIBLE_TLS)
-                    .allEnabledTlsVersions()
-                    .allEnabledCipherSuites()
-                    .build();
+            // 纯 HTTP，无 TLS 限制，超时 60 秒
             client = new OkHttpClient.Builder()
-                    .connectionSpecs(Arrays.asList(spec, ConnectionSpec.CLEARTEXT))
-                    .connectTimeout(30, TimeUnit.SECONDS)
-                    .readTimeout(30, TimeUnit.SECONDS)
-                    .writeTimeout(30, TimeUnit.SECONDS)
+                    .connectTimeout(60, TimeUnit.SECONDS)
+                    .readTimeout(60, TimeUnit.SECONDS)
+                    .writeTimeout(60, TimeUnit.SECONDS)
                     .retryOnConnectionFailure(true)
                     .build();
         }
@@ -968,8 +960,10 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                 if (key == null) continue;
                 String fullUrl = url + "&apikey=" + key;
                 logger.log(Logger.DEBUG, "请求URL: " + fullUrl);
-                Request request = new Request.Builder().url(fullUrl)
+                Request request = new Request.Builder()
+                        .url(fullUrl)
                         .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36")
+                        .header("Connection", "close")  // 避免 keep-alive 问题
                         .build();
                 try {
                     Response response = client.newCall(request).execute();
