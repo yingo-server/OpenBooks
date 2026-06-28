@@ -33,11 +33,9 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
-import okhttp3.ConnectionSpec;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
-import okhttp3.TlsVersion;
 
 public class MainActivity extends Activity implements SurfaceHolder.Callback, Runnable {
 
@@ -120,7 +118,6 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         chapterCache = new ChapterCache();
         apiClient = new ApiClient();
 
-        // 延迟加载配置，让 UI 先渲染，避免因初始化耗时被系统杀死
         mainHandler.postDelayed(new Runnable() {
             @Override
             public void run() {
@@ -933,14 +930,11 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         private OkHttpClient client;
 
         public ApiClient() {
-            ConnectionSpec spec = new ConnectionSpec.Builder(ConnectionSpec.MODERN_TLS)
-                    .tlsVersions(TlsVersion.TLS_1_2)
-                    .build();
+            // 宽松配置，兼容所有协议，增加超时
             client = new OkHttpClient.Builder()
-                    .connectionSpecs(java.util.Arrays.asList(spec, ConnectionSpec.CLEARTEXT))
-                    .connectTimeout(15, TimeUnit.SECONDS)
-                    .readTimeout(15, TimeUnit.SECONDS)
-                    .writeTimeout(15, TimeUnit.SECONDS)
+                    .connectTimeout(30, TimeUnit.SECONDS)
+                    .readTimeout(30, TimeUnit.SECONDS)
+                    .writeTimeout(30, TimeUnit.SECONDS)
                     .retryOnConnectionFailure(true)
                     .build();
         }
