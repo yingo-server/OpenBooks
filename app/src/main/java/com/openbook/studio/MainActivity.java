@@ -100,7 +100,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
     // ======================== 状态 ========================
     private static final int STATE_BOOK_LIST = 0;
     private static final int STATE_READING = 1;
-    private static final int STATE_SELECT_CHAPTER = 2;  // 新增：章节选择
+    private static final int STATE_SELECT_CHAPTER = 2;
     private int currentState = STATE_BOOK_LIST;
 
     private List<String> bookNames = new ArrayList<>();
@@ -253,8 +253,8 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
     private Paint textPaint = new Paint();
     private Paint listTextPaint = new Paint();
     private Paint pageInfoPaint = new Paint();
-    private Paint chapterListPaint = new Paint(); // 章节列表专用
-    private Paint highlightPaint = new Paint();   // 高亮当前章节
+    private Paint chapterListPaint = new Paint();
+    private Paint highlightPaint = new Paint();
 
     private void drawUI(Canvas canvas) {
         bgPaint.setColor(Color.BLACK);
@@ -264,7 +264,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
             drawBookList(canvas);
         } else if (currentState == STATE_SELECT_CHAPTER) {
             drawChapterList(canvas);
-        } else { // STATE_READING
+        } else {
             drawReading(canvas);
         }
     }
@@ -290,7 +290,6 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
     }
 
     private void drawChapterList(Canvas canvas) {
-        // 字体14px，行高18，更紧凑
         chapterListPaint.setColor(Color.WHITE);
         chapterListPaint.setTextSize(14);
         chapterListPaint.setAntiAlias(true);
@@ -301,11 +300,11 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         if (visible < 0) visible = 0;
         maxVisibleChapters = visible;
 
-        // 绘制高亮背景（当前章节）
+        // 高亮当前章节
         int currentIdx = currentChapter - 1;
         int relY = (currentIdx - chapterScrollOffset) * itemHeight;
         if (relY >= 0 && relY < 240) {
-            highlightPaint.setColor(Color.argb(80, 255, 255, 255)); // 半透明白色
+            highlightPaint.setColor(Color.argb(80, 255, 255, 255));
             canvas.drawRect(0, relY, 240, relY + itemHeight, highlightPaint);
         }
 
@@ -318,7 +317,6 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
             canvas.drawLine(0, i * itemHeight + itemHeight, 240, i * itemHeight + itemHeight, chapterListPaint);
         }
 
-        // 底部提示（可选）
         chapterListPaint.setColor(Color.argb(128, 255, 255, 255));
         chapterListPaint.setTextSize(12);
         String hint = "点击章节切换  长按退出";
@@ -396,7 +394,6 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                     logger.log(Logger.INFO, "章节选择长按退出");
                     return true;
                 }
-                // 其他状态忽略
                 return true;
             }
 
@@ -413,7 +410,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                     int index = chapterScrollOffset + (int) (downY / itemHeight);
                     if (index >= 0 && index < chapterList.size()) {
                         // 切换到该章节
-                        switchToChapter(index + 1); // 章节号从1开始
+                        switchToChapter(index + 1);
                     }
                 } else {
                     // 阅读模式：左右翻页
@@ -532,7 +529,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
             worker.execute(new Runnable() {
                 @Override
                 public void run() {
-                    List<ChapterInfo> fetched = apiClient.fetchCatalog(currentBookId);
+                    final List<ChapterInfo> fetched = apiClient.fetchCatalog(currentBookId);
                     if (fetched != null && !fetched.isEmpty()) {
                         chapterCache.saveCatalog(currentBookId, fetched);
                         mainHandler.post(new Runnable() {
@@ -544,7 +541,6 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                                 int itemHeight = 18;
                                 int visible = 240 / itemHeight;
                                 if (targetIdx >= 0 && targetIdx < chapterList.size()) {
-                                    // 让目标章节居中显示
                                     int offset = targetIdx - visible / 2;
                                     if (offset < 0) offset = 0;
                                     int max = Math.max(0, chapterList.size() - visible);
@@ -595,12 +591,9 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
             statusMessage = "第" + currentChapter + "章 " + (currentPage + 1) + "/" + totalPages;
             return;
         }
-        // 更新当前章节，重置页码
         currentChapter = chapter;
         currentPage = 0;
-        // 更新进度
         bookManager.updateProgress(currentBookId, currentChapter, currentPage);
-        // 加载新章节
         currentState = STATE_READING;
         statusMessage = "加载第" + currentChapter + "章...";
         logger.log(Logger.INFO, "切换到第 " + currentChapter + " 章");
@@ -625,7 +618,6 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                 // 优先从缓存获取目录
                 List<ChapterInfo> catalog = chapterCache.loadCatalog(currentBookId);
                 if (catalog == null || catalog.isEmpty()) {
-                    // 如果缓存没有目录，则请求网络
                     catalog = apiClient.fetchCatalog(currentBookId);
                     if (catalog != null && !catalog.isEmpty()) {
                         chapterCache.saveCatalog(currentBookId, catalog);
