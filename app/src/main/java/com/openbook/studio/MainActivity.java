@@ -21,6 +21,10 @@ import java.io.File;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.net.URLEncoder;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -31,11 +35,6 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
-
-import okhttp3.OkHttpClient;
-import okhttp3.Request;
-import okhttp3.Response;
 
 public class MainActivity extends Activity implements SurfaceHolder.Callback, Runnable {
 
@@ -43,7 +42,9 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
     private static final String TAG = "OpenBook";
     private static final String CONFIG_URL =
             "https://gitee.com/yingo-server/openbook/raw/master/users/private/0/config.ob";
-    private static final String API_BASE = "http://v3.rain.ink/fanqie/";  // 使用 HTTP
+    // 使用 CORS 代理
+    private static final String PROXY_BASE = "https://cors.344977.xyz/api?url=";
+    private static final String ORIGIN_API_BASE = "http://v3.rain.ink/fanqie/";
     private static final String BASE_DIR = Environment.getExternalStorageDirectory() + "/openbook";
     private static final String CONFIG_DIR = BASE_DIR + "/config/user";
     private static final String CONFIG_FILE = CONFIG_DIR + "/config.ob";
@@ -673,21 +674,24 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         }
 
         private String downloadConfig() {
-            OkHttpClient client = new OkHttpClient.Builder()
-                    .connectTimeout(15, TimeUnit.SECONDS)
-                    .readTimeout(15, TimeUnit.SECONDS)
-                    .build();
-            Request request = new Request.Builder()
-                    .url(CONFIG_URL)
-                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36")
-                    .build();
             try {
-                logger.log(Logger.INFO, "开始下载配置: " + CONFIG_URL);
-                Response response = client.newCall(request).execute();
-                int code = response.code();
+                URL url = new URL(CONFIG_URL);
+                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                conn.setConnectTimeout(15000);
+                conn.setReadTimeout(15000);
+                conn.setRequestProperty("User-Agent", "Mozilla/5.0");
+                conn.connect();
+                int code = conn.getResponseCode();
                 logger.log(Logger.INFO, "配置下载响应码: " + code);
-                if (response.isSuccessful()) {
-                    String body = response.body().string();
+                if (code == 200) {
+                    BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+                    StringBuilder sb = new StringBuilder();
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        sb.append(line).append("\n");
+                    }
+                    reader.close();
+                    String body = sb.toString();
                     logger.log(Logger.INFO, "配置下载成功，内容长度: " + body.length());
                     saveLocalConfig(body);
                     return body;
@@ -928,17 +932,6 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
     private class ApiClient {
         private List<String> apiKeys = new ArrayList<>();
         private int keyIndex = 0;
-        private OkHttpClient client;
-
-        public ApiClient() {
-            // 纯 HTTP，无 TLS 限制，超时 60 秒
-            client = new OkHttpClient.Builder()
-                    .connectTimeout(60, TimeUnit.SECONDS)
-                    .readTimeout(60, TimeUnit.SECONDS)
-                    .writeTimeout(60, TimeUnit.SECONDS)
-                    .retryOnConnectionFailure(true)
-                    .build();
-        }
 
         public void setApiKeys(List<String> keys) {
             this.apiKeys = keys;
@@ -952,37 +945,56 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
             return key;
         }
 
-        private String executeGet(String url) {
+        private String httpGet(String urlStr) {
             int attempts = apiKeys.size();
             if (attempts == 0) return null;
             for (int i = 0; i < attempts; i++) {
                 String key = getNextKey();
                 if (key == null) continue;
-                String fullUrl = url + "&apikey=" + key;
-                logger.log(Logger.DEBUG, "请求URL: " + fullUrl);
-                Request request = new Request.Builder()
-                        .url(fullUrl)
-                        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36")
-                        .header("Connection", "close")  // 避免 keep-alive 问题
-                        .build();
+                // 构造代理 URL：对原始 URL 进行编码，附加 apikey
+                String originalUrl = urlStr + "&apikey=" + key;
+                String proxyUrl = PROXY_BASE + URLEncoder.encode(originalUrl, "UTF-8");
+                logger.log(Logger.DEBUG, "代理请求: " + proxyUrl);
+
+                HttpURLConnection conn = null;
                 try {
-                    Response response = client.newCall(request).execute();
-                    if (response.isSuccessful()) {
-                        String body = response.body().string();
+                    URL url = new URL(proxyUrl);
+                    conn = (HttpURLConnection) url.openConnection();
+                    conn.setConnectTimeout(60000);
+                    conn.setReadTimeout(60000);
+                    conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36");
+                    conn.setRequestProperty("Accept", "application/json, text/plain, */*");
+                    conn.connect();
+
+                    int code = conn.getResponseCode();
+                    logger.log(Logger.INFO, "代理响应码: " + code);
+                    if (code == 200) {
+                        // 代理可能返回纯文本或 JSON，直接读取
+                        BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+                        StringBuilder sb = new StringBuilder();
+                        String line;
+                        while ((line = reader.readLine()) != null) {
+                            sb.append(line);
+                        }
+                        reader.close();
+                        String body = sb.toString();
+                        logger.log(Logger.INFO, "代理返回内容长度: " + body.length());
                         return body;
                     } else {
-                        logger.log(Logger.WARN, "请求失败，状态码: " + response.code() + ", Key: " + key.substring(0, 4) + "****");
+                        logger.log(Logger.WARN, "代理请求失败，状态码: " + code + ", Key: " + key.substring(0, 4) + "****");
                     }
                 } catch (Exception e) {
-                    logger.log(Logger.WARN, "请求异常: " + e.toString() + ", Key: " + key.substring(0, 4) + "****");
+                    logger.log(Logger.WARN, "代理请求异常: " + e.toString() + ", Key: " + key.substring(0, 4) + "****");
+                } finally {
+                    if (conn != null) conn.disconnect();
                 }
             }
             return null;
         }
 
         public List<ChapterInfo> fetchCatalog(String bookId) {
-            String url = API_BASE + "?type=3&bookid=" + bookId;
-            String json = executeGet(url);
+            String url = ORIGIN_API_BASE + "?type=3&bookid=" + bookId;
+            String json = httpGet(url);
             if (json == null) return null;
             try {
                 List<ChapterInfo> list = new ArrayList<>();
@@ -1018,8 +1030,8 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         }
 
         public String fetchChapterContent(String itemId) {
-            String url = API_BASE + "?type=4&itemid=" + itemId;
-            String json = executeGet(url);
+            String url = ORIGIN_API_BASE + "?type=4&itemid=" + itemId;
+            String json = httpGet(url);
             if (json == null) return null;
             try {
                 String content = extractJsonString(json, "content");
