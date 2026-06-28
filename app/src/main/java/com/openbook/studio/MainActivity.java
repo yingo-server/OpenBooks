@@ -2,7 +2,6 @@
 package com.openbook.studio;
 
 import android.app.Activity;
-import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
@@ -44,7 +43,6 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
 
     // ======================== 常量 ========================
     private static final String TAG = "OpenBook";
-    // 使用 Gitee RAW 直链
     private static final String CONFIG_URL =
             "https://gitee.com/yingo-server/openbook/raw/master/users/private/0/config.ob";
     private static final String BASE_DIR = Environment.getExternalStorageDirectory() + "/openbook";
@@ -78,13 +76,11 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
     private static final int STATE_READING = 1;
     private int currentState = STATE_BOOK_LIST;
 
-    // 书籍列表
     private List<String> bookNames = new ArrayList<>();
     private List<String> bookIds = new ArrayList<>();
     private int bookListScrollOffset = 0;
     private int maxVisibleItems = 0;
 
-    // 阅读状态
     private String currentBookId = null;
     private int currentChapter = 1;
     private int currentPage = 0;
@@ -112,13 +108,11 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         super.onCreate(savedInstanceState);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
-        // 直接创建 SurfaceView，无需 XML 布局
         surfaceView = new SurfaceView(this);
         holder = surfaceView.getHolder();
         holder.addCallback(this);
         setContentView(surfaceView);
 
-        // 初始化管理器
         logger = new Logger();
         logger.log(Logger.INFO, "应用启动");
         configManager = new ConfigManager();
@@ -126,8 +120,13 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         chapterCache = new ChapterCache();
         apiClient = new ApiClient();
 
-        // 加载配置
-        loadConfig();
+        // 延迟加载配置，让 UI 先渲染，避免因初始化耗时被系统杀死
+        mainHandler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                loadConfig();
+            }
+        }, 500);
     }
 
     @Override
@@ -213,7 +212,6 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         bgPaint.setColor(Color.BLACK);
         canvas.drawRect(0, 0, 240, 240, bgPaint);
 
-        // 状态栏背景
         statusPaint.setColor(Color.DKGRAY);
         canvas.drawRect(0, 0, 240, STATUS_HEIGHT, statusPaint);
         statusPaint.setColor(Color.WHITE);
@@ -225,7 +223,6 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         float rightWidth = statusPaint.measureText(right);
         canvas.drawText(right, 240 - rightWidth - 4, STATUS_HEIGHT - 6, statusPaint);
 
-        // 底部指示栏
         bottomPaint.setColor(Color.DKGRAY);
         canvas.drawRect(0, 240 - BOTTOM_HEIGHT, 240, 240, bottomPaint);
         bottomPaint.setColor(Color.WHITE);
@@ -240,7 +237,6 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         float bottomWidth = bottomPaint.measureText(bottomText);
         canvas.drawText(bottomText, (240 - bottomWidth) / 2, 240 - 10, bottomPaint);
 
-        // 内容区域
         if (currentState == STATE_BOOK_LIST) {
             drawBookList(canvas);
         } else {
