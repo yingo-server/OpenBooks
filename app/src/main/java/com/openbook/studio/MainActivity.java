@@ -80,7 +80,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
     private static final String CONFIG_FILE = CONFIG_DIR + "/config.ob";
     private static final String PROGRESS_FILE = CONFIG_DIR + "/progress.ob";
     private static final String BOOKS_DIR = BASE_DIR + "/books";
-    public static final String LOG_DIR = BASE_DIR + "/logs";  // 公开供 Logger 使用
+    public static final String LOG_DIR = BASE_DIR + "/logs";
     private static final int MAX_CACHED_CHAPTERS = 3;
     // 11x11 网格
     private static final int COLS = 11;
@@ -100,12 +100,18 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
     // ======================== 状态 ========================
     private static final int STATE_BOOK_LIST = 0;
     private static final int STATE_READING = 1;
+    private static final int STATE_SELECT_CHAPTER = 2;  // 新增：章节选择
     private int currentState = STATE_BOOK_LIST;
 
     private List<String> bookNames = new ArrayList<>();
     private List<String> bookIds = new ArrayList<>();
     private int bookListScrollOffset = 0;
     private int maxVisibleItems = 0;
+
+    // 章节选择列表
+    private List<ChapterInfo> chapterList = new ArrayList<>();
+    private int chapterScrollOffset = 0;
+    private int maxVisibleChapters = 0;
 
     private String currentBookId = null;
     private int currentChapter = 1;
@@ -142,7 +148,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         holder.addCallback(this);
         setContentView(surfaceView);
 
-        logger = new Logger();  // 构造函数中会清理旧日志
+        logger = new Logger();
         logger.log(Logger.INFO, "应用启动");
 
         sharedClient = buildTls12Client();
@@ -247,6 +253,8 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
     private Paint textPaint = new Paint();
     private Paint listTextPaint = new Paint();
     private Paint pageInfoPaint = new Paint();
+    private Paint chapterListPaint = new Paint(); // 章节列表专用
+    private Paint highlightPaint = new Paint();   // 高亮当前章节
 
     private void drawUI(Canvas canvas) {
         bgPaint.setColor(Color.BLACK);
@@ -254,7 +262,9 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
 
         if (currentState == STATE_BOOK_LIST) {
             drawBookList(canvas);
-        } else {
+        } else if (currentState == STATE_SELECT_CHAPTER) {
+            drawChapterList(canvas);
+        } else { // STATE_READING
             drawReading(canvas);
         }
     }
@@ -277,6 +287,43 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
             canvas.drawText(name, 8, y, listTextPaint);
             canvas.drawLine(0, i * 48 + 48, 240, i * 48 + 48, listTextPaint);
         }
+    }
+
+    private void drawChapterList(Canvas canvas) {
+        // 字体14px，行高18，更紧凑
+        chapterListPaint.setColor(Color.WHITE);
+        chapterListPaint.setTextSize(14);
+        chapterListPaint.setAntiAlias(true);
+        int itemHeight = 18;
+
+        int visible = Math.min(chapterList.size() - chapterScrollOffset,
+                240 / itemHeight);
+        if (visible < 0) visible = 0;
+        maxVisibleChapters = visible;
+
+        // 绘制高亮背景（当前章节）
+        int currentIdx = currentChapter - 1;
+        int relY = (currentIdx - chapterScrollOffset) * itemHeight;
+        if (relY >= 0 && relY < 240) {
+            highlightPaint.setColor(Color.argb(80, 255, 255, 255)); // 半透明白色
+            canvas.drawRect(0, relY, 240, relY + itemHeight, highlightPaint);
+        }
+
+        for (int i = 0; i < visible; i++) {
+            int idx = chapterScrollOffset + i;
+            if (idx >= chapterList.size()) break;
+            String title = chapterList.get(idx).title;
+            int y = i * itemHeight + itemHeight - 4;
+            canvas.drawText(title, 4, y, chapterListPaint);
+            canvas.drawLine(0, i * itemHeight + itemHeight, 240, i * itemHeight + itemHeight, chapterListPaint);
+        }
+
+        // 底部提示（可选）
+        chapterListPaint.setColor(Color.argb(128, 255, 255, 255));
+        chapterListPaint.setTextSize(12);
+        String hint = "点击章节切换  长按退出";
+        float w = chapterListPaint.measureText(hint);
+        canvas.drawText(hint, (240 - w) / 2, 240 - 4, chapterListPaint);
     }
 
     private void drawReading(Canvas canvas) {
@@ -328,22 +375,48 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
             float dist = (float) Math.sqrt(dx * dx + dy * dy);
             long elapsed = upTime - downTime;
 
+            // 长按处理
             if (elapsed >= LONG_PRESS_DURATION) {
                 if (currentState == STATE_READING) {
+                    // 判断上下半屏
+                    if (downY < 120) {
+                        // 上半屏长按 → 进入章节选择
+                        enterChapterSelect();
+                    } else {
+                        // 下半屏长按 → 退出阅读
+                        currentState = STATE_BOOK_LIST;
+                        statusMessage = "";
+                        logger.log(Logger.INFO, "长按退出阅读");
+                    }
+                    return true;
+                } else if (currentState == STATE_SELECT_CHAPTER) {
+                    // 章节选择界面长按直接退出到书籍列表
                     currentState = STATE_BOOK_LIST;
                     statusMessage = "";
-                    logger.log(Logger.INFO, "长按退出阅读");
+                    logger.log(Logger.INFO, "章节选择长按退出");
+                    return true;
                 }
+                // 其他状态忽略
                 return true;
             }
 
+            // 短按（点击或滑动）
             if (dist < TOUCH_SLOP) {
+                // 点击
                 if (currentState == STATE_BOOK_LIST) {
                     int index = (int) (downY / 48);
                     if (index >= 0 && index < bookNames.size()) {
                         selectBook(index);
                     }
+                } else if (currentState == STATE_SELECT_CHAPTER) {
+                    int itemHeight = 18;
+                    int index = chapterScrollOffset + (int) (downY / itemHeight);
+                    if (index >= 0 && index < chapterList.size()) {
+                        // 切换到该章节
+                        switchToChapter(index + 1); // 章节号从1开始
+                    }
                 } else {
+                    // 阅读模式：左右翻页
                     if (upX < 120) {
                         turnPrevious();
                     } else {
@@ -352,6 +425,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                 }
                 return true;
             } else {
+                // 滑动
                 if (currentState == STATE_BOOK_LIST) {
                     if (Math.abs(dy) > Math.abs(dx)) {
                         int delta = (int) (-dy / 48);
@@ -359,6 +433,15 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                         int max = Math.max(0, bookNames.size() - maxVisibleItems);
                         if (bookListScrollOffset < 0) bookListScrollOffset = 0;
                         if (bookListScrollOffset > max) bookListScrollOffset = max;
+                    }
+                } else if (currentState == STATE_SELECT_CHAPTER) {
+                    if (Math.abs(dy) > Math.abs(dx)) {
+                        int itemHeight = 18;
+                        int delta = (int) (-dy / itemHeight);
+                        chapterScrollOffset += delta;
+                        int max = Math.max(0, chapterList.size() - maxVisibleChapters);
+                        if (chapterScrollOffset < 0) chapterScrollOffset = 0;
+                        if (chapterScrollOffset > max) chapterScrollOffset = max;
                     }
                 }
                 return true;
@@ -438,6 +521,92 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         loadChapter(currentChapter, currentPage);
     }
 
+    // 进入章节选择界面
+    private void enterChapterSelect() {
+        // 先尝试从缓存加载目录
+        List<ChapterInfo> catalog = chapterCache.loadCatalog(currentBookId);
+        if (catalog == null || catalog.isEmpty()) {
+            // 如果没有，从网络获取
+            logger.log(Logger.INFO, "章节选择：从网络加载目录");
+            statusMessage = "加载目录...";
+            worker.execute(new Runnable() {
+                @Override
+                public void run() {
+                    List<ChapterInfo> fetched = apiClient.fetchCatalog(currentBookId);
+                    if (fetched != null && !fetched.isEmpty()) {
+                        chapterCache.saveCatalog(currentBookId, fetched);
+                        mainHandler.post(new Runnable() {
+                            @Override
+                            public void run() {
+                                chapterList = fetched;
+                                // 定位到当前章节
+                                int targetIdx = currentChapter - 1;
+                                int itemHeight = 18;
+                                int visible = 240 / itemHeight;
+                                if (targetIdx >= 0 && targetIdx < chapterList.size()) {
+                                    // 让目标章节居中显示
+                                    int offset = targetIdx - visible / 2;
+                                    if (offset < 0) offset = 0;
+                                    int max = Math.max(0, chapterList.size() - visible);
+                                    if (offset > max) offset = max;
+                                    chapterScrollOffset = offset;
+                                }
+                                currentState = STATE_SELECT_CHAPTER;
+                                statusMessage = "";
+                                logger.log(Logger.INFO, "章节选择界面已加载，共 " + chapterList.size() + " 章");
+                            }
+                        });
+                    } else {
+                        mainHandler.post(new Runnable() {
+                            @Override
+                            public void run() {
+                                statusMessage = "目录加载失败";
+                                logger.log(Logger.ERROR, "章节选择：目录加载失败");
+                            }
+                        });
+                    }
+                }
+            });
+        } else {
+            // 缓存存在，直接显示
+            chapterList = catalog;
+            int targetIdx = currentChapter - 1;
+            int itemHeight = 18;
+            int visible = 240 / itemHeight;
+            if (targetIdx >= 0 && targetIdx < chapterList.size()) {
+                int offset = targetIdx - visible / 2;
+                if (offset < 0) offset = 0;
+                int max = Math.max(0, chapterList.size() - visible);
+                if (offset > max) offset = max;
+                chapterScrollOffset = offset;
+            }
+            currentState = STATE_SELECT_CHAPTER;
+            statusMessage = "";
+            logger.log(Logger.INFO, "从缓存加载章节列表，共 " + chapterList.size() + " 章");
+        }
+    }
+
+    // 切换到指定章节
+    private void switchToChapter(int chapter) {
+        if (chapter < 1 || chapter > chapterList.size()) return;
+        if (chapter == currentChapter) {
+            // 相同章节，回到阅读界面
+            currentState = STATE_READING;
+            statusMessage = "第" + currentChapter + "章 " + (currentPage + 1) + "/" + totalPages;
+            return;
+        }
+        // 更新当前章节，重置页码
+        currentChapter = chapter;
+        currentPage = 0;
+        // 更新进度
+        bookManager.updateProgress(currentBookId, currentChapter, currentPage);
+        // 加载新章节
+        currentState = STATE_READING;
+        statusMessage = "加载第" + currentChapter + "章...";
+        logger.log(Logger.INFO, "切换到第 " + currentChapter + " 章");
+        loadChapter(currentChapter, 0);
+    }
+
     private void loadChapter(final int chapter, final int page) {
         if (isLoadingChapter) return;
         isLoadingChapter = true;
@@ -453,7 +622,15 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                 }
 
                 logger.log(Logger.INFO, "从网络加载第" + chapter + "章");
-                List<ChapterInfo> catalog = apiClient.fetchCatalog(currentBookId);
+                // 优先从缓存获取目录
+                List<ChapterInfo> catalog = chapterCache.loadCatalog(currentBookId);
+                if (catalog == null || catalog.isEmpty()) {
+                    // 如果缓存没有目录，则请求网络
+                    catalog = apiClient.fetchCatalog(currentBookId);
+                    if (catalog != null && !catalog.isEmpty()) {
+                        chapterCache.saveCatalog(currentBookId, catalog);
+                    }
+                }
                 if (catalog == null || catalog.isEmpty()) {
                     logger.log(Logger.ERROR, "获取目录失败");
                     mainHandler.post(new Runnable() {
@@ -920,6 +1097,10 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
             return getBookDir(bookId) + "/data" + String.format(Locale.US, "%04d", chapter) + ".ob";
         }
 
+        private String getCatalogPath(String bookId) {
+            return getBookDir(bookId) + "/content.ob";
+        }
+
         public boolean hasChapter(String bookId, int chapter) {
             return new File(getChapterPath(bookId, chapter)).exists();
         }
@@ -986,6 +1167,48 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                 if (f.exists()) f.delete();
             }
             logger.log(Logger.INFO, "清理缓存，保留最近" + MAX_CACHED_CHAPTERS + "章");
+        }
+
+        // ========== 目录缓存 ==========
+        public void saveCatalog(String bookId, List<ChapterInfo> catalog) {
+            File dir = new File(getBookDir(bookId));
+            if (!dir.exists()) dir.mkdirs();
+            File file = new File(getCatalogPath(bookId));
+            try {
+                BufferedWriter writer = new BufferedWriter(new FileWriter(file));
+                for (ChapterInfo info : catalog) {
+                    writer.write(info.itemId + "@" + info.title + "\n");
+                }
+                writer.close();
+                logger.log(Logger.INFO, "目录缓存保存成功，共 " + catalog.size() + " 章");
+            } catch (IOException e) {
+                logger.log(Logger.ERROR, "保存目录缓存失败: " + e.toString());
+            }
+        }
+
+        public List<ChapterInfo> loadCatalog(String bookId) {
+            File file = new File(getCatalogPath(bookId));
+            if (!file.exists()) return null;
+            List<ChapterInfo> result = new ArrayList<>();
+            try {
+                BufferedReader reader = new BufferedReader(new FileReader(file));
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    int at = line.indexOf('@');
+                    if (at != -1) {
+                        ChapterInfo info = new ChapterInfo();
+                        info.itemId = line.substring(0, at);
+                        info.title = line.substring(at + 1);
+                        result.add(info);
+                    }
+                }
+                reader.close();
+                logger.log(Logger.INFO, "目录缓存加载成功，共 " + result.size() + " 章");
+                return result;
+            } catch (IOException e) {
+                logger.log(Logger.ERROR, "读取目录缓存失败: " + e.toString());
+                return null;
+            }
         }
     }
 
@@ -1087,16 +1310,11 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         }
 
         private String cleanContent(String raw) {
-            // 使用 Html.fromHtml 解码所有实体和标签
             String decoded = Html.fromHtml(raw).toString();
-            // 移除赞助警告
             String warning = "为保证服务质量，免费用户请不要下书！或前往网站赞助后刷新隐藏该提示(赞助用户一天可下载一万章)";
             decoded = decoded.replace(warning, "");
-            // 压缩连续换行
             decoded = decoded.replaceAll("\n{3,}", "\n\n");
-            // 去除首尾空白
             decoded = decoded.trim();
-            // 统一换行符
             decoded = decoded.replace("\r\n", "\n").replace("\r", "\n");
             return decoded;
         }
@@ -1117,10 +1335,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         private String logFile;
 
         public Logger() {
-            // 先清理旧日志（保留今天的）
             cleanOldLogs();
-
-            // 创建当前日志目录
             String timeStamp = new SimpleDateFormat("yyyy-MM-dd-HH-mm-ss", Locale.US).format(new Date());
             logDir = LOG_DIR + "/" + timeStamp;
             logFile = logDir + "/logs.ob";
@@ -1138,7 +1353,6 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
             for (File child : children) {
                 if (child.isDirectory()) {
                     String name = child.getName();
-                    // 只保留以今天日期开头的目录（白名单）
                     if (!name.startsWith(today)) {
                         deleteRecursive(child);
                     }
@@ -1155,7 +1369,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                     }
                 }
             }
-            file.delete(); // 如果删除失败也忽略
+            file.delete();
         }
 
         public void log(String level, String msg) {
