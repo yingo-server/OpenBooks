@@ -1,6 +1,8 @@
+// 路径: app/src/main/java/com/openbook/studio/MainActivity.java
 package com.openbook.studio;
 
 import android.app.Activity;
+import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
@@ -42,8 +44,9 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
 
     // ======================== 常量 ========================
     private static final String TAG = "OpenBook";
+    // 使用 Gitee RAW 直链
     private static final String CONFIG_URL =
-            "https://gitee.com/yingo-server/openbook/users/private/0/config.ob";
+            "https://gitee.com/yingo-server/openbook/raw/master/users/private/0/config.ob";
     private static final String BASE_DIR = Environment.getExternalStorageDirectory() + "/openbook";
     private static final String CONFIG_DIR = BASE_DIR + "/config/user";
     private static final String CONFIG_FILE = CONFIG_DIR + "/config.ob";
@@ -210,6 +213,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         bgPaint.setColor(Color.BLACK);
         canvas.drawRect(0, 0, 240, 240, bgPaint);
 
+        // 状态栏背景
         statusPaint.setColor(Color.DKGRAY);
         canvas.drawRect(0, 0, 240, STATUS_HEIGHT, statusPaint);
         statusPaint.setColor(Color.WHITE);
@@ -221,6 +225,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         float rightWidth = statusPaint.measureText(right);
         canvas.drawText(right, 240 - rightWidth - 4, STATUS_HEIGHT - 6, statusPaint);
 
+        // 底部指示栏
         bottomPaint.setColor(Color.DKGRAY);
         canvas.drawRect(0, 240 - BOTTOM_HEIGHT, 240, 240, bottomPaint);
         bottomPaint.setColor(Color.WHITE);
@@ -228,13 +233,14 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         bottomPaint.setAntiAlias(true);
         String bottomText = "";
         if (currentState == STATE_BOOK_LIST) {
-            bottomText = "长按书籍? 滑动列表";
+            bottomText = "滑动列表 点击选择";
         } else {
             bottomText = "左半屏上一面  右半屏下一面  长按退出";
         }
         float bottomWidth = bottomPaint.measureText(bottomText);
         canvas.drawText(bottomText, (240 - bottomWidth) / 2, 240 - 10, bottomPaint);
 
+        // 内容区域
         if (currentState == STATE_BOOK_LIST) {
             drawBookList(canvas);
         } else {
@@ -338,10 +344,6 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                         int max = Math.max(0, bookNames.size() - maxVisibleItems);
                         if (bookListScrollOffset < 0) bookListScrollOffset = 0;
                         if (bookListScrollOffset > max) bookListScrollOffset = max;
-                        int remainder = bookListScrollOffset % 1;
-                        if (remainder != 0) {
-                            bookListScrollOffset = Math.round(bookListScrollOffset);
-                        }
                     }
                 }
                 return true;
@@ -681,13 +683,22 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                     .connectTimeout(15, TimeUnit.SECONDS)
                     .readTimeout(15, TimeUnit.SECONDS)
                     .build();
-            Request request = new Request.Builder().url(CONFIG_URL).build();
+            Request request = new Request.Builder()
+                    .url(CONFIG_URL)
+                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36")
+                    .build();
             try {
+                logger.log(Logger.INFO, "开始下载配置: " + CONFIG_URL);
                 Response response = client.newCall(request).execute();
+                int code = response.code();
+                logger.log(Logger.INFO, "配置下载响应码: " + code);
                 if (response.isSuccessful()) {
                     String body = response.body().string();
+                    logger.log(Logger.INFO, "配置下载成功，内容长度: " + body.length());
                     saveLocalConfig(body);
                     return body;
+                } else {
+                    logger.log(Logger.ERROR, "配置下载失败，响应码: " + code);
                 }
             } catch (Exception e) {
                 logger.log(Logger.ERROR, "下载配置异常: " + e.toString());
@@ -727,6 +738,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         }
 
         private Config parseConfig(String content) {
+            logger.log(Logger.INFO, "开始解析配置，内容长度: " + content.length());
             Config config = new Config();
             config.bookNames = new ArrayList<>();
             config.bookIds = new ArrayList<>();
@@ -734,6 +746,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
             config.version = 0;
 
             String[] lines = content.split("\n");
+            logger.log(Logger.INFO, "配置行数: " + lines.length);
             for (String line : lines) {
                 line = line.trim();
                 if (line.isEmpty()) continue;
@@ -746,22 +759,26 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                     value = value.substring(0, value.length() - 1);
                 }
                 if (key.equals("Ver")) {
-                    try { config.version = Integer.parseInt(value); } catch (Exception ignored) {}
+                    try { config.version = Integer.parseInt(value);
+                    logger.log(Logger.INFO, "配置版本: " + config.version);} catch (Exception ignored) {}
                 } else if (key.equals("UserApiKey")) {
                     String[] keys = value.split(",");
                     for (String k : keys) {
                         if (!k.trim().isEmpty()) config.apiKeys.add(k.trim());
                     }
+                    logger.log(Logger.INFO, "解析到 API Key 数量: " + config.apiKeys.size());
                 } else if (key.equals("BookList")) {
                     String[] names = value.split(",");
                     for (String n : names) {
                         if (!n.trim().isEmpty()) config.bookNames.add(n.trim());
                     }
+                    logger.log(Logger.INFO, "解析到书籍名称数量: " + config.bookNames.size());
                 } else if (key.equals("BookId")) {
                     String[] ids = value.split(",");
                     for (String id : ids) {
                         if (!id.trim().isEmpty()) config.bookIds.add(id.trim());
                     }
+                    logger.log(Logger.INFO, "解析到书籍ID数量: " + config.bookIds.size());
                 }
             }
 
@@ -777,6 +794,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                 logger.log(Logger.ERROR, "配置中无API Key");
                 return null;
             }
+            logger.log(Logger.INFO, "配置解析完成，有效书籍数: " + config.bookNames.size());
             return config;
         }
     }
