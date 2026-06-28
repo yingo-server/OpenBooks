@@ -5,10 +5,12 @@ import android.app.Activity;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
+import android.graphics.Typeface;
 import android.os.Bundle;
 import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
+import android.text.Html;
 import android.util.Log;
 import android.view.MotionEvent;
 import android.view.SurfaceHolder;
@@ -80,10 +82,10 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
     private static final String BOOKS_DIR = BASE_DIR + "/books";
     private static final String LOG_DIR = BASE_DIR + "/logs";
     private static final int MAX_CACHED_CHAPTERS = 3;
-    // 8x8 网格
-    private static final int COLS = 8;
-    private static final int ROWS = 8;
-    private static final int FONT_SIZE = 28; // 适配 8x8
+    // 11x11 网格
+    private static final int COLS = 11;
+    private static final int ROWS = 11;
+    private static final int FONT_SIZE = 20; // 240/11 ≈ 21.8，取20保证清晰
     private static final long LONG_PRESS_DURATION = 1500;
     private static final int TOUCH_SLOP = 10;
 
@@ -239,7 +241,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         }
     }
 
-    // ======================== UI 绘制（精简版，无状态栏/底部栏）=======================
+    // ======================== UI 绘制 ========================
 
     private Paint bgPaint = new Paint();
     private Paint textPaint = new Paint();
@@ -247,7 +249,6 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
     private Paint pageInfoPaint = new Paint();
 
     private void drawUI(Canvas canvas) {
-        // 全屏纯黑背景
         bgPaint.setColor(Color.BLACK);
         canvas.drawRect(0, 0, 240, 240, bgPaint);
 
@@ -264,7 +265,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         listTextPaint.setAntiAlias(true);
 
         int visible = Math.min(bookNames.size() - bookListScrollOffset,
-                240 / 48); // 约5项
+                240 / 48);
         if (visible < 0) visible = 0;
         maxVisibleItems = visible;
 
@@ -274,7 +275,6 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
             String name = bookNames.get(idx);
             int y = i * 48 + 48 - 8;
             canvas.drawText(name, 8, y, listTextPaint);
-            // 分隔线
             canvas.drawLine(0, i * 48 + 48, 240, i * 48 + 48, listTextPaint);
         }
     }
@@ -283,8 +283,11 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         textPaint.setColor(Color.WHITE);
         textPaint.setTextSize(FONT_SIZE);
         textPaint.setAntiAlias(true);
+        textPaint.setSubpixelText(true);
+        textPaint.setTypeface(Typeface.DEFAULT);
+
         int totalWidth = COLS * FONT_SIZE;
-        int startX = (240 - totalWidth) / 2; // 居中
+        int startX = (240 - totalWidth) / 2;
         int startY = (240 - ROWS * FONT_SIZE) / 2;
         for (int r = 0; r < ROWS; r++) {
             for (int c = 0; c < COLS; c++) {
@@ -295,12 +298,13 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                 canvas.drawText(String.valueOf(ch), x, y, textPaint);
             }
         }
-        // 页码信息显示在右下角（半透明）
+
         pageInfoPaint.setColor(Color.argb(128, 255, 255, 255));
-        pageInfoPaint.setTextSize(16);
+        pageInfoPaint.setTextSize(14);
+        pageInfoPaint.setAntiAlias(true);
         String pageInfo = currentChapter + "  " + (currentPage + 1) + "/" + totalPages;
         float w = pageInfoPaint.measureText(pageInfo);
-        canvas.drawText(pageInfo, 240 - w - 4, 240 - 8, pageInfoPaint);
+        canvas.drawText(pageInfo, 240 - w - 4, 240 - 6, pageInfoPaint);
     }
 
     // ======================== 触摸事件 ========================
@@ -324,7 +328,6 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
             float dist = (float) Math.sqrt(dx * dx + dy * dy);
             long elapsed = upTime - downTime;
 
-            // 长按退出
             if (elapsed >= LONG_PRESS_DURATION) {
                 if (currentState == STATE_READING) {
                     currentState = STATE_BOOK_LIST;
@@ -335,14 +338,12 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
             }
 
             if (dist < TOUCH_SLOP) {
-                // 点击
                 if (currentState == STATE_BOOK_LIST) {
                     int index = (int) (downY / 48);
                     if (index >= 0 && index < bookNames.size()) {
                         selectBook(index);
                     }
                 } else {
-                    // 阅读模式：左右半屏翻页
                     if (upX < 120) {
                         turnPrevious();
                     } else {
@@ -351,7 +352,6 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                 }
                 return true;
             } else {
-                // 滑动（仅在书籍列表模式）
                 if (currentState == STATE_BOOK_LIST) {
                     if (Math.abs(dy) > Math.abs(dx)) {
                         int delta = (int) (-dy / 48);
@@ -528,9 +528,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         for (int i = 0; i < chapterContent.length(); i++) {
             char ch = chapterContent.charAt(i);
             if (ch == '\n') {
-                if (col > 0) {
-                    col = COLS; // 强制换行
-                }
+                if (col > 0) col = COLS;
                 row++;
                 col = 0;
                 if (row >= ROWS) {
@@ -551,9 +549,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                 }
             }
         }
-        if (row > 0 || col > 0) {
-            totalPages++;
-        }
+        if (row > 0 || col > 0) totalPages++;
         if (totalPages == 0) totalPages = 1;
     }
 
@@ -1082,8 +1078,8 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                     logger.log(Logger.ERROR, "章节内容API返回错误码");
                     return null;
                 }
-                String content = root.getJSONObject("data").getString("content");
-                return cleanContent(content);
+                String rawContent = root.getJSONObject("data").getString("content");
+                return cleanContent(rawContent);
             } catch (Exception e) {
                 logger.log(Logger.ERROR, "解析章节内容失败: " + e.toString());
                 return null;
@@ -1091,15 +1087,19 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         }
 
         private String cleanContent(String raw) {
+            // 使用 Html.fromHtml 解码所有实体和标签
+            String decoded = Html.fromHtml(raw).toString();
+            // 移除赞助警告
             String warning = "为保证服务质量，免费用户请不要下书！或前往网站赞助后刷新隐藏该提示(赞助用户一天可下载一万章)";
-            raw = raw.replace(warning, "");
-            raw = raw.replace("</p>", "\n");
-            raw = raw.replace("<br>", "\n").replace("<br/>", "\n");
-            raw = raw.replaceAll("<[^>]*>", "");
-            raw = raw.replaceAll("\n{3,}", "\n\n");
-            raw = raw.trim();
-            raw = raw.replace("\r\n", "\n").replace("\r", "\n");
-            return raw;
+            decoded = decoded.replace(warning, "");
+            // 替换段落标签为换行（已由 fromHtml 处理，但有些可能遗留）
+            // 压缩连续换行
+            decoded = decoded.replaceAll("\n{3,}", "\n\n");
+            // 去除首尾空白
+            decoded = decoded.trim();
+            // 统一换行符
+            decoded = decoded.replace("\r\n", "\n").replace("\r", "\n");
+            return decoded;
         }
     }
 
