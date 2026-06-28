@@ -697,12 +697,25 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
 
     private OkHttpClient buildTls12Client() {
         try {
-            // 使用 Conscrypt 的 SSLContext
-            SSLContext sslContext = SSLContext.getInstance("TLSv1.2", "Conscrypt");
-            sslContext.init(null, null, null);
+            // 1. 创建 TrustManager，信任所有证书
+            final X509TrustManager trustAllManager = new X509TrustManager() {
+                @Override
+                public void checkClientTrusted(X509Certificate[] chain, String authType) {}
+                @Override
+                public void checkServerTrusted(X509Certificate[] chain, String authType) {}
+                @Override
+                public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
+            };
 
-            // 调试：打印支持的协议
-            SSLSocket testSocket = (SSLSocket) sslContext.getSocketFactory().createSocket();
+            // 2. 创建 SSLContext，并用上面的 TrustManager 初始化
+            SSLContext sslContext = SSLContext.getInstance("TLSv1.2", "Conscrypt");
+            sslContext.init(null, new TrustManager[]{trustAllManager}, new java.security.SecureRandom());
+
+            // 3. 从同一个 SSLContext 获取 SSLSocketFactory
+            SSLSocketFactory sslSocketFactory = sslContext.getSocketFactory();
+
+            // 4. 调试：打印支持的协议
+            SSLSocket testSocket = (SSLSocket) sslSocketFactory.createSocket();
             String[] protocols = testSocket.getSupportedProtocols();
             logger.log(Logger.DEBUG, "Supported protocols: " + Arrays.toString(protocols));
             if (protocols != null) {
@@ -716,22 +729,12 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                 logger.log(Logger.INFO, "TLSv1.2 支持: " + hasTls12);
             }
 
-            // 创建不安全的 TrustManager（信任所有证书）
-            X509TrustManager trustAllManager = new X509TrustManager() {
-                @Override
-                public void checkClientTrusted(X509Certificate[] chain, String authType) {}
-                @Override
-                public void checkServerTrusted(X509Certificate[] chain, String authType) {}
-                @Override
-                public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
-            };
-
-            // 强制使用 TLSv1.2
+            // 5. 强制使用 TLSv1.2
             ConnectionSpec spec = new ConnectionSpec.Builder(ConnectionSpec.MODERN_TLS)
                     .tlsVersions(TlsVersion.TLS_1_2)
                     .build();
 
-            // 允许所有主机名
+            // 6. 允许所有主机名
             HostnameVerifier allowAllHostnames = new HostnameVerifier() {
                 @Override
                 public boolean verify(String hostname, SSLSession session) {
@@ -741,13 +744,14 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
 
             return new OkHttpClient.Builder()
                     .connectionSpecs(Collections.singletonList(spec))
-                    .sslSocketFactory(sslContext.getSocketFactory(), trustAllManager)
+                    .sslSocketFactory(sslSocketFactory, trustAllManager)  // 使用同一个 SSLContext 生成的 TrustManager
                     .hostnameVerifier(allowAllHostnames)
                     .connectTimeout(60, TimeUnit.SECONDS)
                     .readTimeout(60, TimeUnit.SECONDS)
                     .writeTimeout(60, TimeUnit.SECONDS)
                     .retryOnConnectionFailure(true)
                     .build();
+
         } catch (Exception e) {
             logger.log(Logger.ERROR, "构建 TLS 1.2 客户端失败: " + e.toString());
             return null;
