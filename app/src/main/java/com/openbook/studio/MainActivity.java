@@ -80,12 +80,12 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
     private static final String CONFIG_FILE = CONFIG_DIR + "/config.ob";
     private static final String PROGRESS_FILE = CONFIG_DIR + "/progress.ob";
     private static final String BOOKS_DIR = BASE_DIR + "/books";
-    private static final String LOG_DIR = BASE_DIR + "/logs";
+    public static final String LOG_DIR = BASE_DIR + "/logs";  // 公开供 Logger 使用
     private static final int MAX_CACHED_CHAPTERS = 3;
     // 11x11 网格
     private static final int COLS = 11;
     private static final int ROWS = 11;
-    private static final int FONT_SIZE = 20; // 240/11 ≈ 21.8，取20保证清晰
+    private static final int FONT_SIZE = 20;
     private static final long LONG_PRESS_DURATION = 1500;
     private static final int TOUCH_SLOP = 10;
 
@@ -142,7 +142,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         holder.addCallback(this);
         setContentView(surfaceView);
 
-        logger = new Logger();
+        logger = new Logger();  // 构造函数中会清理旧日志
         logger.log(Logger.INFO, "应用启动");
 
         sharedClient = buildTls12Client();
@@ -1092,7 +1092,6 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
             // 移除赞助警告
             String warning = "为保证服务质量，免费用户请不要下书！或前往网站赞助后刷新隐藏该提示(赞助用户一天可下载一万章)";
             decoded = decoded.replace(warning, "");
-            // 替换段落标签为换行（已由 fromHtml 处理，但有些可能遗留）
             // 压缩连续换行
             decoded = decoded.replaceAll("\n{3,}", "\n\n");
             // 去除首尾空白
@@ -1118,12 +1117,45 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         private String logFile;
 
         public Logger() {
+            // 先清理旧日志（保留今天的）
+            cleanOldLogs();
+
+            // 创建当前日志目录
             String timeStamp = new SimpleDateFormat("yyyy-MM-dd-HH-mm-ss", Locale.US).format(new Date());
             logDir = LOG_DIR + "/" + timeStamp;
             logFile = logDir + "/logs.ob";
             File dir = new File(logDir);
             if (!dir.exists()) dir.mkdirs();
             log(INFO, "日志系统初始化");
+        }
+
+        private void cleanOldLogs() {
+            String today = new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(new Date());
+            File logsDir = new File(LOG_DIR);
+            if (!logsDir.exists() || !logsDir.isDirectory()) return;
+            File[] children = logsDir.listFiles();
+            if (children == null) return;
+            for (File child : children) {
+                if (child.isDirectory()) {
+                    String name = child.getName();
+                    // 只保留以今天日期开头的目录（白名单）
+                    if (!name.startsWith(today)) {
+                        deleteRecursive(child);
+                    }
+                }
+            }
+        }
+
+        private void deleteRecursive(File file) {
+            if (file.isDirectory()) {
+                File[] children = file.listFiles();
+                if (children != null) {
+                    for (File child : children) {
+                        deleteRecursive(child);
+                    }
+                }
+            }
+            file.delete(); // 如果删除失败也忽略
         }
 
         public void log(String level, String msg) {
