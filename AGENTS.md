@@ -36,7 +36,8 @@ OpenBooks/
 - 状态机:`STATE_BOOK_LIST`=0 / `STATE_READING`=1 / `STATE_SELECT_CHAPTER`=2,由 `drawUI()` 分发
 - 底部是**双进度条**(`drawProgressBars`,各 3px 高、贴底,不遮挡正文):青色=本节进度(阅读态=当前页/总页数),白色=整书总进度(阅读态=整书位置,分母 `chapterList.size()`;书列表/章节选择态=列表滚动位置);`statusMessage` 字段仅日志用,不再绘制
 - 触摸处理依赖硬编码像素值:书列表项高 48px、章节项高 18px(底部 18px 提示区不响应点击)、半屏分割 120px、长按阈值 1500ms、翻页左右半屏 120px——改动布局时需同步修改 `onTouchEvent`
-- 列表滚动:**ACTION_MOVE 实时跟手**,瞬时速度限幅(±60px/帧)+ EMA 平滑;ACTION_UP 保留惯性(阈值 3.0px/帧起滑,限幅后×0.125 起滑,渲染循环 `updateInertia()` 每帧衰减 0.90,`applyScroll` 钳位,到边界改为 ×0.3 摩擦减速而非瞬间停);改滚动手感时同步 `FLING_THRESHOLD/FLING_DECAY/FLING_MIN/MAX_FLING`
+- **滚动位置单位是 px(逻辑像素)**:`bookListScrollOffset`/`chapterScrollOffset` 直接存 px,绘制/点击/定位时除以项高(48/18)换算条数(`firstIdx = (int)(offset / itemHeight)`);边界 `max = size*48-240`;改动时必须区分 px 与条数,禁止把触摸位移 dyPx 直接当条数用
+- 列表滚动:**ACTION_MOVE 实时跟手(1:1)**,瞬时速度限幅(±60px/帧)+ EMA 平滑;ACTION_UP 决定是否进入惯性(阈值 3.0px/帧起滑,限幅后×0.125,渲染循环 `updateInertia()` 每帧衰减 0.90,`flinging` 标志保证**拖动中不叠加惯性滚动**,`applyScroll` 钳位,到边界 ×0.3 摩擦减速而非瞬间停);改滚动手感时同步 `FLING_THRESHOLD/FLING_DECAY/FLING_MIN/MAX_FLING`
 - 阅读排版:11x11 字符网格(`COLS=11, ROWS=11`)、字号 20px
 - 数据全部存外部存储 `/sdcard/openbook/`:
   - `config/user/config.ob`:远程配置缓存;配置解析格式为每行 `key@value`,以 `!!!!!` 行结束,value 尾部 `!` 为转义(见 `ConfigManager.parseConfig`)

@@ -112,12 +112,12 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
 
     private List<String> bookNames = new ArrayList<>();
     private List<String> bookIds = new ArrayList<>();
-    private int bookListScrollOffset = 0;
+    private int bookListScrollOffset = 0;      // 单位:px(逻辑像素),绘制/点击时除以 48 换算条数
     private int maxVisibleItems = 0;
 
     // 章节选择列表
     private List<ChapterInfo> chapterList = new ArrayList<>();
-    private int chapterScrollOffset = 0;
+    private int chapterScrollOffset = 0;        // 单位:px(逻辑像素),绘制/点击时除以 18 换算条数
     private int maxVisibleChapters = 0;
 
     private String currentBookId = null;
@@ -314,10 +314,10 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
             }
         } else if (currentState == STATE_BOOK_LIST) {
             whiteFrac = bookNames.isEmpty() ? 0f
-                    : (bookListScrollOffset + maxVisibleItems) / (float) bookNames.size();
+                    : (bookListScrollOffset + maxVisibleItems * 48) / (float) (bookNames.size() * 48);
         } else if (currentState == STATE_SELECT_CHAPTER) {
             whiteFrac = chapterList.isEmpty() ? 0f
-                    : (chapterScrollOffset + maxVisibleChapters) / (float) chapterList.size();
+                    : (chapterScrollOffset + maxVisibleChapters * 18) / (float) (chapterList.size() * 18);
         }
         if (whiteFrac < 0f) whiteFrac = 0f;
         if (whiteFrac > 1f) whiteFrac = 1f;
@@ -335,13 +335,14 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         listTextPaint.setTextSize(28);
         listTextPaint.setAntiAlias(true);
 
-        int visible = Math.min(bookNames.size() - bookListScrollOffset,
+        int firstIdx = (int) (bookListScrollOffset / 48);
+        int visible = Math.min(bookNames.size() - firstIdx,
                 240 / 48);
         if (visible < 0) visible = 0;
         maxVisibleItems = visible;
 
         for (int i = 0; i < visible; i++) {
-            int idx = bookListScrollOffset + i;
+            int idx = firstIdx + i;
             if (idx >= bookNames.size()) break;
             String name = bookNames.get(idx);
             int y = i * 48 + 48 - 8;
@@ -356,21 +357,22 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         chapterListPaint.setAntiAlias(true);
         int itemHeight = 18;
 
-        int visible = Math.min(chapterList.size() - chapterScrollOffset,
+        int firstIdx = (int) (chapterScrollOffset / itemHeight);
+        int visible = Math.min(chapterList.size() - firstIdx,
                 240 / itemHeight);
         if (visible < 0) visible = 0;
         maxVisibleChapters = visible;
 
         // 高亮当前章节
         int currentIdx = currentChapter - 1;
-        int relY = (currentIdx - chapterScrollOffset) * itemHeight;
+        int relY = (currentIdx - firstIdx) * itemHeight;
         if (relY >= 0 && relY < 240) {
             highlightPaint.setColor(Color.argb(80, 255, 255, 255));
             canvas.drawRect(0, relY, 240, relY + itemHeight, highlightPaint);
         }
 
         for (int i = 0; i < visible; i++) {
-            int idx = chapterScrollOffset + i;
+            int idx = firstIdx + i;
             if (idx >= chapterList.size()) break;
             String title = chapterList.get(idx).title;
             int y = i * itemHeight + itemHeight - 4;
@@ -413,6 +415,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
     private float lastMoveY = 0;
     private long lastMoveTime = 0;
     private volatile float scrollVelocity = 0;
+    private volatile boolean flinging = false;
     private static final float FLING_THRESHOLD = 3.0f;
     private static final float FLING_DECAY = 0.90f;
     private static final float FLING_MIN = 1.0f;
@@ -431,6 +434,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
             lastMoveY = downY;
             lastMoveTime = downTime;
             scrollVelocity = 0;
+            flinging = false;
             return true;
         } else if (event.getAction() == MotionEvent.ACTION_MOVE) {
             // 拖动中实时滚动(书列表/章节列表)
@@ -488,14 +492,14 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
             if (dist < TOUCH_SLOP) {
                 // 点击
                 if (currentState == STATE_BOOK_LIST) {
-                    int index = bookListScrollOffset + (int) (downY / 48);
+                    int index = (int) (bookListScrollOffset / 48) + (int) (downY / 48);
                     if (index >= 0 && index < bookNames.size()) {
                         selectBook(index);
                     }
                 } else if (currentState == STATE_SELECT_CHAPTER) {
                     int itemHeight = 18;
                     if (downY >= 240 - itemHeight) return true;
-                    int index = chapterScrollOffset + (int) (downY / itemHeight);
+                    int index = (int) (chapterScrollOffset / itemHeight) + (int) (downY / itemHeight);
                     if (index >= 0 && index < chapterList.size()) {
                         // 切换到该章节
                         switchToChapter(index + 1);
@@ -510,13 +514,15 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                 }
                 return true;
             } else {
-                // 滑动:滚动已在 ACTION_MOVE 实时更新,这里只决定是否保留惯性(限幅后×0.125,惯性缩小到 1/4)
+                // 滑动:滚动已在 ACTION_MOVE 实时更新(1:1 跟手),这里决定是否进入惯性(限幅后×0.125)
                 if (Math.abs(scrollVelocity) < FLING_THRESHOLD) {
                     scrollVelocity = 0;
+                    flinging = false;
                 } else {
                     if (scrollVelocity > MAX_FLING) scrollVelocity = MAX_FLING;
                     else if (scrollVelocity < -MAX_FLING) scrollVelocity = -MAX_FLING;
                     scrollVelocity *= 0.125f;
+                    flinging = true;
                 }
                 return true;
             }
@@ -525,6 +531,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
             downY = -1;
             downTime = 0;
             scrollVelocity = 0;
+            flinging = false;
             return true;
         }
         return super.onTouchEvent(event);
@@ -535,7 +542,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
     private void applyScroll(int delta) {
         if (currentState == STATE_BOOK_LIST) {
             bookListScrollOffset += delta;
-            int max = Math.max(0, bookNames.size() - maxVisibleItems);
+            int max = Math.max(0, bookNames.size() * 48 - 240);
             if (bookListScrollOffset < 0) {
                 bookListScrollOffset = 0;
                 if (scrollVelocity < 0) scrollVelocity *= 0.3f;
@@ -545,7 +552,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
             }
         } else if (currentState == STATE_SELECT_CHAPTER) {
             chapterScrollOffset += delta;
-            int max = Math.max(0, chapterList.size() - maxVisibleChapters);
+            int max = Math.max(0, chapterList.size() * 18 - 240);
             if (chapterScrollOffset < 0) {
                 chapterScrollOffset = 0;
                 if (scrollVelocity < 0) scrollVelocity *= 0.3f;
@@ -556,13 +563,14 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         }
     }
 
-    // 渲染循环每帧调用:惯性滚动(速度逐帧衰减,单位 px/帧)
+    // 渲染循环每帧调用:惯性滚动(仅松手起滑后生效,拖动中不叠加,速度逐帧衰减,单位 px/帧)
     private void updateInertia() {
-        if (scrollVelocity == 0f) return;
+        if (!flinging || scrollVelocity == 0f) return;
         applyScroll((int) scrollVelocity);
         scrollVelocity *= FLING_DECAY;
         if (Math.abs(scrollVelocity) < FLING_MIN) {
             scrollVelocity = 0;
+            flinging = false;
         }
     }
 
@@ -667,7 +675,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                                     if (offset < 0) offset = 0;
                                     int max = Math.max(0, chapterList.size() - visible);
                                     if (offset > max) offset = max;
-                                    chapterScrollOffset = offset;
+                                    chapterScrollOffset = offset * itemHeight;
                                 }
                                 currentState = STATE_SELECT_CHAPTER;
                                 statusMessage = "";
@@ -697,7 +705,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                 if (offset < 0) offset = 0;
                 int max = Math.max(0, chapterList.size() - visible);
                 if (offset > max) offset = max;
-                chapterScrollOffset = offset;
+                chapterScrollOffset = offset * itemHeight;
             }
             currentState = STATE_SELECT_CHAPTER;
             statusMessage = "";
