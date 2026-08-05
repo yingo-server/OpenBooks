@@ -119,7 +119,8 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
     private int totalPages = 0;
     private char[][] grid = new char[ROWS][COLS];
     private String chapterContent = "";
-    private boolean isLoadingChapter = false;
+    private volatile boolean isLoadingChapter = false;
+    private volatile boolean isLoadingCatalog = false;
     private String statusMessage = "";
 
     // ======================== 管理器 ========================
@@ -255,6 +256,8 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
     private Paint pageInfoPaint = new Paint();
     private Paint chapterListPaint = new Paint();
     private Paint highlightPaint = new Paint();
+    private Paint statusBgPaint = new Paint();
+    private Paint statusPaint = new Paint();
 
     private void drawUI(Canvas canvas) {
         bgPaint.setColor(Color.BLACK);
@@ -267,6 +270,20 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         } else {
             drawReading(canvas);
         }
+
+        drawStatusMessage(canvas);
+    }
+
+    private void drawStatusMessage(Canvas canvas) {
+        if (statusMessage == null || statusMessage.isEmpty()) return;
+        statusBgPaint.setColor(Color.argb(180, 0, 0, 0));
+        statusBgPaint.setAntiAlias(true);
+        canvas.drawRect(0, 240 - 26, 240, 240, statusBgPaint);
+        statusPaint.setColor(Color.WHITE);
+        statusPaint.setTextSize(14);
+        statusPaint.setAntiAlias(true);
+        float w = statusPaint.measureText(statusMessage);
+        canvas.drawText(statusMessage, (240 - w) / 2, 240 - 8, statusPaint);
     }
 
     private void drawBookList(Canvas canvas) {
@@ -401,12 +418,13 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
             if (dist < TOUCH_SLOP) {
                 // 点击
                 if (currentState == STATE_BOOK_LIST) {
-                    int index = (int) (downY / 48);
+                    int index = bookListScrollOffset + (int) (downY / 48);
                     if (index >= 0 && index < bookNames.size()) {
                         selectBook(index);
                     }
                 } else if (currentState == STATE_SELECT_CHAPTER) {
                     int itemHeight = 18;
+                    if (downY >= 240 - itemHeight) return true;
                     int index = chapterScrollOffset + (int) (downY / itemHeight);
                     if (index >= 0 && index < chapterList.size()) {
                         // 切换到该章节
@@ -443,6 +461,11 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                 }
                 return true;
             }
+        } else if (event.getAction() == MotionEvent.ACTION_CANCEL) {
+            downX = -1;
+            downY = -1;
+            downTime = 0;
+            return true;
         }
         return super.onTouchEvent(event);
     }
@@ -520,12 +543,14 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
 
     // 进入章节选择界面
     private void enterChapterSelect() {
+        if (isLoadingCatalog) return;
         // 先尝试从缓存加载目录
         List<ChapterInfo> catalog = chapterCache.loadCatalog(currentBookId);
         if (catalog == null || catalog.isEmpty()) {
             // 如果没有，从网络获取
             logger.log(Logger.INFO, "章节选择：从网络加载目录");
             statusMessage = "加载目录...";
+            isLoadingCatalog = true;
             worker.execute(new Runnable() {
                 @Override
                 public void run() {
@@ -535,6 +560,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                         mainHandler.post(new Runnable() {
                             @Override
                             public void run() {
+                                isLoadingCatalog = false;
                                 chapterList = fetched;
                                 // 定位到当前章节
                                 int targetIdx = currentChapter - 1;
@@ -556,6 +582,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                         mainHandler.post(new Runnable() {
                             @Override
                             public void run() {
+                                isLoadingCatalog = false;
                                 statusMessage = "目录加载失败";
                                 logger.log(Logger.ERROR, "章节选择：目录加载失败");
                             }
@@ -593,7 +620,6 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         }
         currentChapter = chapter;
         currentPage = 0;
-        bookManager.updateProgress(currentBookId, currentChapter, currentPage);
         currentState = STATE_READING;
         statusMessage = "加载第" + currentChapter + "章...";
         logger.log(Logger.INFO, "切换到第 " + currentChapter + " 章");
@@ -790,13 +816,6 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
             return;
         }
         int nextChapter = currentChapter + 1;
-        if (chapterCache.hasChapter(currentBookId, nextChapter)) {
-            String content = chapterCache.loadChapter(currentBookId, nextChapter);
-            if (content != null) {
-                onChapterLoaded(content, nextChapter, 0);
-                return;
-            }
-        }
         loadChapter(nextChapter, 0);
     }
 
@@ -811,20 +830,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         }
         int prevChapter = currentChapter - 1;
         if (prevChapter >= 1) {
-            if (chapterCache.hasChapter(currentBookId, prevChapter)) {
-                String content = chapterCache.loadChapter(currentBookId, prevChapter);
-                if (content != null) {
-                    onChapterLoaded(content, prevChapter, Integer.MAX_VALUE);
-                    return;
-                }
-            }
-            statusMessage = "无法回退";
-            mainHandler.postDelayed(new Runnable() {
-                @Override
-                public void run() {
-                    statusMessage = "第" + currentChapter + "章 " + (currentPage + 1) + "/" + totalPages;
-                }
-            }, 1500);
+            loadChapter(prevChapter, Integer.MAX_VALUE);
         } else {
             statusMessage = "已是第一章";
             mainHandler.postDelayed(new Runnable() {
@@ -1225,6 +1231,11 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
             return key;
         }
 
+        private String maskKey(String key) {
+            if (key == null || key.length() <= 4) return "****";
+            return key.substring(0, 4) + "****";
+        }
+
         private String httpGet(String originalUrl) {
             int attempts = apiKeys.size();
             if (attempts == 0) return null;
@@ -1240,18 +1251,18 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                         .header("Connection", "close")
                         .build();
 
+                Response response = null;
                 try {
-                    Response response = client.newCall(request).execute();
+                    response = client.newCall(request).execute();
                     if (response.isSuccessful()) {
-                        String body = response.body().string();
-                        response.close();
-                        return body;
+                        return response.body().string();
                     } else {
-                        logger.log(Logger.WARN, "请求失败，状态码: " + response.code() + ", Key: " + key.substring(0, 4) + "****");
-                        response.close();
+                        logger.log(Logger.WARN, "请求失败，状态码: " + response.code() + ", Key: " + maskKey(key));
                     }
                 } catch (Exception e) {
-                    logger.log(Logger.WARN, "请求异常: " + e.toString() + ", Key: " + key.substring(0, 4) + "****");
+                    logger.log(Logger.WARN, "请求异常: " + e.toString() + ", Key: " + maskKey(key));
+                } finally {
+                    if (response != null) response.close();
                 }
             }
             return null;
@@ -1364,7 +1375,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
             file.delete();
         }
 
-        public void log(String level, String msg) {
+        public synchronized void log(String level, String msg) {
             String time = new SimpleDateFormat("yyyy-MM-dd-HH:mm:ss", Locale.US).format(new Date());
             String line = "[" + time + "][" + level + "]: " + msg + "\n";
             try {
