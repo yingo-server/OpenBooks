@@ -128,6 +128,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
     private String chapterContent = "";
     private volatile boolean isLoadingChapter = false;
     private volatile boolean isLoadingCatalog = false;
+    private volatile boolean isLoadingConfig = false;
     private String statusMessage = "";
 
     // ======================== 管理器 ========================
@@ -141,7 +142,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
     private OkHttpClient sharedClient;
 
     // ======================== 线程 ========================
-    private ExecutorService worker = Executors.newSingleThreadExecutor();
+    private ExecutorService worker = Executors.newFixedThreadPool(2);
     private Handler mainHandler = new Handler(Looper.getMainLooper());
 
     // ======================== Activity 生命周期 ========================
@@ -252,9 +253,13 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                     updateInertia();
                     drawUI(canvas);
                 }
+            } catch (Exception e) {
+                // surface 可能正被销毁,跳过本帧,下一帧重试
             } finally {
                 if (canvas != null) {
-                    holder.unlockCanvasAndPost(canvas);
+                    try {
+                        holder.unlockCanvasAndPost(canvas);
+                    } catch (Exception ignored) {}
                 }
             }
 
@@ -340,6 +345,14 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                 240 / 48);
         if (visible < 0) visible = 0;
         maxVisibleItems = visible;
+
+        if (bookNames.isEmpty() && !statusMessage.isEmpty()) {
+            // 配置加载中/失败:居中提示,点击列表可重试
+            listTextPaint.setTextSize(16);
+            float w = listTextPaint.measureText(statusMessage);
+            canvas.drawText(statusMessage, (240 - w) / 2, 120, listTextPaint);
+            return;
+        }
 
         for (int i = 0; i < visible; i++) {
             int idx = firstIdx + i;
@@ -492,6 +505,12 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
             if (dist < TOUCH_SLOP) {
                 // 点击
                 if (currentState == STATE_BOOK_LIST) {
+                    if (bookNames.isEmpty() && !statusMessage.isEmpty()) {
+                        // 配置未加载或加载失败:点击重试
+                        statusMessage = "";
+                        loadConfig();
+                        return true;
+                    }
                     int index = (int) (bookListScrollOffset / 48) + (int) (downY / 48);
                     if (index >= 0 && index < bookNames.size()) {
                         selectBook(index);
@@ -577,6 +596,8 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
     // ======================== 核心逻辑 ========================
 
     private void loadConfig() {
+        if (isLoadingConfig) return;
+        isLoadingConfig = true;
         mainHandler.post(new Runnable() {
             @Override
             public void run() {
@@ -593,6 +614,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                         mainHandler.post(new Runnable() {
                             @Override
                             public void run() {
+                                isLoadingConfig = false;
                                 statusMessage = "配置加载失败";
                             }
                         });
@@ -605,6 +627,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                     mainHandler.post(new Runnable() {
                         @Override
                         public void run() {
+                            isLoadingConfig = false;
                             statusMessage = "";
                             currentState = STATE_BOOK_LIST;
                         }
@@ -614,6 +637,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                     mainHandler.post(new Runnable() {
                         @Override
                         public void run() {
+                            isLoadingConfig = false;
                             statusMessage = "配置加载异常";
                         }
                     });
@@ -625,6 +649,8 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
     private void selectBook(final int index) {
         if (index < 0 || index >= bookIds.size()) return;
         currentBookId = bookIds.get(index);
+        // 清空上一本书的目录,避免整书进度/章节选择被旧书污染(目录会按需重新加载)
+        chapterList = new ArrayList<>();
         String progress = bookManager.getProgress(currentBookId);
         if (progress != null) {
             String[] parts = progress.split(",");
@@ -730,94 +756,114 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         loadChapter(currentChapter, 0);
     }
 
+    // 章节加载:每次请求递增 seq,过期回调(期间用户已切书/切章)一律丢弃
+    private volatile int chapterLoadSeq = 0;
+
     private void loadChapter(final int chapter, final int page) {
-        if (isLoadingChapter) return;
+        final int seq = ++chapterLoadSeq;
+        final String bookId = currentBookId;
+        if (bookId == null) return;
         isLoadingChapter = true;
         statusMessage = "加载第" + chapter + "章...";
         worker.execute(new Runnable() {
             @Override
             public void run() {
-                String content = chapterCache.loadChapter(currentBookId, chapter);
+                String content = chapterCache.loadChapter(bookId, chapter);
                 if (content != null) {
                     logger.log(Logger.INFO, "从缓存加载第" + chapter + "章");
-                    onChapterLoaded(content, chapter, page);
+                    postChapterLoaded(seq, bookId, content, chapter, page);
                     return;
                 }
 
                 logger.log(Logger.INFO, "从网络加载第" + chapter + "章");
                 // 优先从缓存获取目录
-                List<ChapterInfo> catalog = chapterCache.loadCatalog(currentBookId);
+                List<ChapterInfo> catalog = chapterCache.loadCatalog(bookId);
                 if (catalog == null || catalog.isEmpty()) {
-                    catalog = apiClient.fetchCatalog(currentBookId);
+                    catalog = apiClient.fetchCatalog(bookId);
                     if (catalog != null && !catalog.isEmpty()) {
-                        chapterCache.saveCatalog(currentBookId, catalog);
+                        chapterCache.saveCatalog(bookId, catalog);
                     }
                 }
                 if (catalog == null || catalog.isEmpty()) {
                     logger.log(Logger.ERROR, "获取目录失败");
-                    mainHandler.post(new Runnable() {
-                        @Override
-                        public void run() {
-                            statusMessage = "目录加载失败";
-                            isLoadingChapter = false;
-                        }
-                    });
+                    postChapterFailed(seq, "目录加载失败");
                     return;
                 }
 
-                String itemId = null;
-                if (chapter - 1 < catalog.size()) {
-                    itemId = catalog.get(chapter - 1).itemId;
-                }
+                final String itemId = chapter - 1 < catalog.size() ? catalog.get(chapter - 1).itemId : null;
                 if (itemId == null) {
                     logger.log(Logger.ERROR, "章节索引超出目录范围");
-                    mainHandler.post(new Runnable() {
-                        @Override
-                        public void run() {
-                            statusMessage = "章节不存在";
-                            isLoadingChapter = false;
-                        }
-                    });
+                    postChapterFailed(seq, "章节不存在");
                     return;
                 }
 
                 String chapterContent = apiClient.fetchChapterContent(itemId);
                 if (chapterContent == null) {
                     logger.log(Logger.ERROR, "获取章节内容失败");
-                    mainHandler.post(new Runnable() {
-                        @Override
-                        public void run() {
-                            statusMessage = "内容加载失败";
-                            isLoadingChapter = false;
-                        }
-                    });
+                    postChapterFailed(seq, "内容加载失败");
                     return;
                 }
 
-                chapterCache.saveChapter(currentBookId, chapter, chapterContent);
-                chapterCache.cleanOldChapters(currentBookId, chapter);
-                onChapterLoaded(chapterContent, chapter, page);
+                chapterCache.saveChapter(bookId, chapter, chapterContent);
+                chapterCache.cleanOldChapters(bookId, chapter);
+                postChapterLoaded(seq, bookId, chapterContent, chapter, page);
             }
         });
     }
 
-    private void onChapterLoaded(String content, int chapter, int page) {
+    // 章节加载成功回调(切到主线程执行;seq 过期则丢弃)
+    private void postChapterLoaded(final int seq, final String bookId,
+                                   final String content, final int chapter, final int page) {
+        mainHandler.post(new Runnable() {
+            @Override
+            public void run() {
+                if (seq != chapterLoadSeq) return;
+                isLoadingChapter = false;
+                onChapterLoaded(bookId, content, chapter, page);
+            }
+        });
+    }
+
+    // 章节加载失败回调(seq 过期则丢弃)
+    private void postChapterFailed(final int seq, final String msg) {
+        mainHandler.post(new Runnable() {
+            @Override
+            public void run() {
+                if (seq != chapterLoadSeq) return;
+                statusMessage = msg;
+                isLoadingChapter = false;
+            }
+        });
+    }
+
+    private void onChapterLoaded(final String bookId, String content, int chapter, int page) {
         this.chapterContent = content;
         this.currentChapter = chapter;
         computeTotalPages();
 
-        // 确保目录已加载以计算整书总进度;缺失或章数落后时刷新(处理章节更新)
+        // 确保目录已加载以计算整书总进度;缺失或章数落后时刷新(处理章节更新),网络部分在 worker 执行
         if (chapterList.isEmpty() || chapterList.size() < currentChapter) {
-            List<ChapterInfo> catalog = chapterCache.loadCatalog(currentBookId);
-            if (catalog == null || catalog.isEmpty()) {
-                catalog = apiClient.fetchCatalog(currentBookId);
-                if (catalog != null && !catalog.isEmpty()) {
-                    chapterCache.saveCatalog(currentBookId, catalog);
+            worker.execute(new Runnable() {
+                @Override
+                public void run() {
+                    List<ChapterInfo> catalog = chapterCache.loadCatalog(bookId);
+                    if (catalog == null || catalog.isEmpty()) {
+                        catalog = apiClient.fetchCatalog(bookId);
+                        if (catalog != null && !catalog.isEmpty()) {
+                            chapterCache.saveCatalog(bookId, catalog);
+                        }
+                    }
+                    final List<ChapterInfo> result = catalog;
+                    mainHandler.post(new Runnable() {
+                        @Override
+                        public void run() {
+                            if (result != null && !result.isEmpty() && bookId.equals(currentBookId)) {
+                                chapterList = result;
+                            }
+                        }
+                    });
                 }
-            }
-            if (catalog != null && !catalog.isEmpty()) {
-                chapterList = catalog;
-            }
+            });
         }
 
         if (page < 0) page = 0;
@@ -826,13 +872,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         this.currentPage = page;
         renderPage(page);
         bookManager.updateProgress(currentBookId, currentChapter, currentPage);
-        isLoadingChapter = false;
-        mainHandler.post(new Runnable() {
-            @Override
-            public void run() {
-                statusMessage = "第" + currentChapter + "章 " + (currentPage + 1) + "/" + totalPages;
-            }
-        });
+        statusMessage = "第" + currentChapter + "章 " + (currentPage + 1) + "/" + totalPages;
         logger.log(Logger.INFO, "章节加载完成: " + currentChapter + ", 页: " + currentPage + "/" + totalPages);
     }
 
@@ -935,6 +975,10 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
             return;
         }
         int nextChapter = currentChapter + 1;
+        if (!chapterList.isEmpty() && nextChapter > chapterList.size()) {
+            statusMessage = "已是最后一章";
+            return;
+        }
         loadChapter(nextChapter, 0);
     }
 

@@ -34,6 +34,7 @@ OpenBooks/
 
 - UI 是 SurfaceView 手绘 Canvas,内部逻辑固定 **240x240**,经**分辨率适配**等比缩放到物理屏幕:最大内接正方形 `scale=min(w,h)/240` 居中(上下或左右黑边),`surfaceChanged` 计算 `viewScale/viewOffsetX/viewOffsetY`,`drawUI` 用 canvas.save/translate/scale 绘制,**触摸坐标必须经 `toLogicX/toLogicY` 逆变换**后再走逻辑像素逻辑(48/18/120 等全为逻辑值);渲染循环约 20fps(50ms sleep)
 - 状态机:`STATE_BOOK_LIST`=0 / `STATE_READING`=1 / `STATE_SELECT_CHAPTER`=2,由 `drawUI()` 分发
+- **章节加载并发(易踩坑)**:`loadChapter` 用 `chapterLoadSeq` 请求序号——每次加载递增,回调切主线程后 `seq != chapterLoadSeq` 即丢弃(用户已切书/切章);因此**禁止改回 `isLoadingChapter` 互斥或 "回调无校验"**;`onChapterLoaded` 必须在**主线程**执行(其内部目录补拉才回 worker),状态的读写与触摸/渲染同线程;`selectBook` 必须清空 `chapterList`(防旧书目录污染);worker 是**双线程池**,禁止改回单线程(会被旧网络请求阻塞切书)
 - 底部是**双进度条**(`drawProgressBars`,各 3px 高、贴底,不遮挡正文):青色=本节进度(阅读态=当前页/总页数),白色=整书总进度(阅读态=整书位置,分母 `chapterList.size()`;书列表/章节选择态=列表滚动位置);`statusMessage` 字段仅日志用,不再绘制
 - 触摸处理依赖硬编码像素值:书列表项高 48px、章节项高 18px(底部 18px 提示区不响应点击)、半屏分割 120px、长按阈值 1500ms、翻页左右半屏 120px——改动布局时需同步修改 `onTouchEvent`
 - **滚动位置单位是 px(逻辑像素)**:`bookListScrollOffset`/`chapterScrollOffset` 直接存 px,绘制/点击/定位时除以项高(48/18)换算条数(`firstIdx = (int)(offset / itemHeight)`);边界 `max = size*48-240`;改动时必须区分 px 与条数,禁止把触摸位移 dyPx 直接当条数用
