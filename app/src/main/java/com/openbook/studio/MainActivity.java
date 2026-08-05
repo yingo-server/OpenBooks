@@ -510,13 +510,13 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                 }
                 return true;
             } else {
-                // 滑动:滚动已在 ACTION_MOVE 实时更新,这里只决定是否保留惯性(限幅后减半,降低惯性)
+                // 滑动:滚动已在 ACTION_MOVE 实时更新,这里只决定是否保留惯性(限幅后×0.125,惯性缩小到 1/4)
                 if (Math.abs(scrollVelocity) < FLING_THRESHOLD) {
                     scrollVelocity = 0;
                 } else {
                     if (scrollVelocity > MAX_FLING) scrollVelocity = MAX_FLING;
                     else if (scrollVelocity < -MAX_FLING) scrollVelocity = -MAX_FLING;
-                    scrollVelocity *= 0.5f;
+                    scrollVelocity *= 0.125f;
                 }
                 return true;
             }
