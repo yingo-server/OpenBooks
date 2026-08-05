@@ -27,8 +27,9 @@
 
 - UI 是 SurfaceView 手绘 Canvas,固定 **240x240 逻辑尺寸**;渲染循环约 20fps(50ms sleep)
 - 状态机:`STATE_BOOK_LIST`=0 / `STATE_READING`=1 / `STATE_SELECT_CHAPTER`=2,由 `drawUI()` 分发
-- `statusMessage` 非空时在屏幕底部绘制半透明状态条(`drawStatusMessage`,26px 高、14px 字、居中),覆盖 pageInfo/底部提示,加载类反馈统一靠它呈现
+- 底部是**双进度条**(`drawProgressBars`,各 3px 高、贴底,不遮挡正文):青色=本节进度(阅读态=当前页/总页数),白色=整书总进度(阅读态=整书位置,分母 `chapterList.size()`;书列表/章节选择态=列表滚动位置);`statusMessage` 字段仅日志用,不再绘制
 - 触摸处理依赖硬编码像素值:书列表项高 48px、章节项高 18px(底部 18px 提示区不响应点击)、半屏分割 120px、长按阈值 1500ms、翻页左右半屏 120px——改动布局时需同步修改 `onTouchEvent`
+- 列表滚动:**ACTION_MOVE 实时跟手**,ACTION_UP 保留惯性(`scrollVelocity` px/帧,渲染循环 `updateInertia()` 每帧衰减 0.85,`applyScroll` 负责钳位,到边界即停);改滚动行为时同步 `FLING_THRESHOLD/FLING_DECAY/FLING_MIN`
 - 阅读排版:11x11 字符网格(`COLS=11, ROWS=11`)、字号 20px
 - 数据全部存外部存储 `/sdcard/openbook/`:
   - `config/user/config.ob`:远程配置缓存;配置解析格式为每行 `key@value`,以 `!!!!!` 行结束,value 尾部 `!` 为转义(见 `ConfigManager.parseConfig`)

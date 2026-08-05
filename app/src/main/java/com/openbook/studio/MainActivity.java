@@ -234,6 +234,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
             try {
                 canvas = holder.lockCanvas();
                 if (canvas != null) {
+                    updateInertia();
                     drawUI(canvas);
                 }
             } finally {
@@ -253,11 +254,9 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
     private Paint bgPaint = new Paint();
     private Paint textPaint = new Paint();
     private Paint listTextPaint = new Paint();
-    private Paint pageInfoPaint = new Paint();
     private Paint chapterListPaint = new Paint();
     private Paint highlightPaint = new Paint();
-    private Paint statusBgPaint = new Paint();
-    private Paint statusPaint = new Paint();
+    private Paint progressBarPaint = new Paint();
 
     private void drawUI(Canvas canvas) {
         bgPaint.setColor(Color.BLACK);
@@ -271,19 +270,43 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
             drawReading(canvas);
         }
 
-        drawStatusMessage(canvas);
+        drawProgressBars(canvas);
     }
 
-    private void drawStatusMessage(Canvas canvas) {
-        if (statusMessage == null || statusMessage.isEmpty()) return;
-        statusBgPaint.setColor(Color.argb(180, 0, 0, 0));
-        statusBgPaint.setAntiAlias(true);
-        canvas.drawRect(0, 240 - 26, 240, 240, statusBgPaint);
-        statusPaint.setColor(Color.WHITE);
-        statusPaint.setTextSize(14);
-        statusPaint.setAntiAlias(true);
-        float w = statusPaint.measureText(statusMessage);
-        canvas.drawText(statusMessage, (240 - w) / 2, 240 - 8, statusPaint);
+    // 底部双进度条:青色(下)=本节页进度/列表当前位置,白色(上)=整书总进度
+    // 白色条处理章节更新:目录缺失或章数落后时由 onChapterLoaded 补拉最新目录作分母
+    private void drawProgressBars(Canvas canvas) {
+        int barHeight = 3;
+        int gap = 1;
+        int whiteY1 = 240 - 1;
+        int whiteY0 = whiteY1 - barHeight + 1;
+        int cyanY1 = whiteY0 - gap;
+        int cyanY0 = cyanY1 - barHeight + 1;
+
+        float whiteFrac = 0f;
+        float cyanFrac = 0f;
+        if (currentState == STATE_READING) {
+            cyanFrac = totalPages > 0 ? (currentPage + 1f) / totalPages : 0f;
+            int totalChapters = chapterList.size();
+            if (totalChapters > 0) {
+                whiteFrac = (currentChapter - 1 + cyanFrac) / totalChapters;
+            }
+        } else if (currentState == STATE_BOOK_LIST) {
+            whiteFrac = bookNames.isEmpty() ? 0f
+                    : (bookListScrollOffset + maxVisibleItems) / (float) bookNames.size();
+        } else if (currentState == STATE_SELECT_CHAPTER) {
+            whiteFrac = chapterList.isEmpty() ? 0f
+                    : (chapterScrollOffset + maxVisibleChapters) / (float) chapterList.size();
+        }
+        if (whiteFrac < 0f) whiteFrac = 0f;
+        if (whiteFrac > 1f) whiteFrac = 1f;
+        if (cyanFrac < 0f) cyanFrac = 0f;
+        if (cyanFrac > 1f) cyanFrac = 1f;
+
+        progressBarPaint.setColor(Color.WHITE);
+        canvas.drawRect(0, whiteY0, 240 * whiteFrac, whiteY1, progressBarPaint);
+        progressBarPaint.setColor(Color.CYAN);
+        canvas.drawRect(0, cyanY0, 240 * cyanFrac, cyanY1, progressBarPaint);
     }
 
     private void drawBookList(Canvas canvas) {
@@ -360,19 +383,18 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                 canvas.drawText(String.valueOf(ch), x, y, textPaint);
             }
         }
-
-        pageInfoPaint.setColor(Color.argb(128, 255, 255, 255));
-        pageInfoPaint.setTextSize(14);
-        pageInfoPaint.setAntiAlias(true);
-        String pageInfo = currentChapter + "  " + (currentPage + 1) + "/" + totalPages;
-        float w = pageInfoPaint.measureText(pageInfo);
-        canvas.drawText(pageInfo, 240 - w - 4, 240 - 6, pageInfoPaint);
     }
 
     // ======================== 触摸事件 ========================
 
     private float downX, downY;
     private long downTime;
+    private float lastMoveY = 0;
+    private long lastMoveTime = 0;
+    private volatile float scrollVelocity = 0;
+    private static final float FLING_THRESHOLD = 1.2f;
+    private static final float FLING_DECAY = 0.85f;
+    private static final float FLING_MIN = 1.0f;
 
     @Override
     public boolean onTouchEvent(MotionEvent event) {
@@ -380,7 +402,22 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
             downX = event.getX();
             downY = event.getY();
             downTime = System.currentTimeMillis();
+            lastMoveY = downY;
+            lastMoveTime = downTime;
+            scrollVelocity = 0;
             return true;
+        } else if (event.getAction() == MotionEvent.ACTION_MOVE) {
+            // 拖动中实时滚动(书列表/章节列表)
+            if (currentState == STATE_BOOK_LIST || currentState == STATE_SELECT_CHAPTER) {
+                float dyPx = lastMoveY - event.getY();
+                long now = System.currentTimeMillis();
+                long dt = now - lastMoveTime;
+                if (dt > 0) scrollVelocity = dyPx * 50f / dt;
+                lastMoveY = event.getY();
+                lastMoveTime = now;
+                applyScroll((int) dyPx);
+                return true;
+            }
         } else if (event.getAction() == MotionEvent.ACTION_UP) {
             float upX = event.getX();
             float upY = event.getY();
@@ -440,24 +477,9 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                 }
                 return true;
             } else {
-                // 滑动
-                if (currentState == STATE_BOOK_LIST) {
-                    if (Math.abs(dy) > Math.abs(dx)) {
-                        int delta = (int) (-dy / 48);
-                        bookListScrollOffset += delta;
-                        int max = Math.max(0, bookNames.size() - maxVisibleItems);
-                        if (bookListScrollOffset < 0) bookListScrollOffset = 0;
-                        if (bookListScrollOffset > max) bookListScrollOffset = max;
-                    }
-                } else if (currentState == STATE_SELECT_CHAPTER) {
-                    if (Math.abs(dy) > Math.abs(dx)) {
-                        int itemHeight = 18;
-                        int delta = (int) (-dy / itemHeight);
-                        chapterScrollOffset += delta;
-                        int max = Math.max(0, chapterList.size() - maxVisibleChapters);
-                        if (chapterScrollOffset < 0) chapterScrollOffset = 0;
-                        if (chapterScrollOffset > max) chapterScrollOffset = max;
-                    }
+                // 滑动:滚动已在 ACTION_MOVE 实时更新,这里只决定是否保留惯性
+                if (Math.abs(scrollVelocity) < FLING_THRESHOLD) {
+                    scrollVelocity = 0;
                 }
                 return true;
             }
@@ -465,9 +487,46 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
             downX = -1;
             downY = -1;
             downTime = 0;
+            scrollVelocity = 0;
             return true;
         }
         return super.onTouchEvent(event);
+    }
+
+    // ======================== 滚动与惯性 ========================
+
+    private void applyScroll(int delta) {
+        if (currentState == STATE_BOOK_LIST) {
+            bookListScrollOffset += delta;
+            int max = Math.max(0, bookNames.size() - maxVisibleItems);
+            if (bookListScrollOffset < 0) {
+                bookListScrollOffset = 0;
+                scrollVelocity = 0;
+            } else if (bookListScrollOffset > max) {
+                bookListScrollOffset = max;
+                scrollVelocity = 0;
+            }
+        } else if (currentState == STATE_SELECT_CHAPTER) {
+            chapterScrollOffset += delta;
+            int max = Math.max(0, chapterList.size() - maxVisibleChapters);
+            if (chapterScrollOffset < 0) {
+                chapterScrollOffset = 0;
+                scrollVelocity = 0;
+            } else if (chapterScrollOffset > max) {
+                chapterScrollOffset = max;
+                scrollVelocity = 0;
+            }
+        }
+    }
+
+    // 渲染循环每帧调用:惯性滚动(速度逐帧衰减,单位 px/帧)
+    private void updateInertia() {
+        if (scrollVelocity == 0f) return;
+        applyScroll((int) scrollVelocity);
+        scrollVelocity *= FLING_DECAY;
+        if (Math.abs(scrollVelocity) < FLING_MIN) {
+            scrollVelocity = 0;
+        }
     }
 
     // ======================== 核心逻辑 ========================
@@ -701,6 +760,21 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         this.chapterContent = content;
         this.currentChapter = chapter;
         computeTotalPages();
+
+        // 确保目录已加载以计算整书总进度;缺失或章数落后时刷新(处理章节更新)
+        if (chapterList.isEmpty() || chapterList.size() < currentChapter) {
+            List<ChapterInfo> catalog = chapterCache.loadCatalog(currentBookId);
+            if (catalog == null || catalog.isEmpty()) {
+                catalog = apiClient.fetchCatalog(currentBookId);
+                if (catalog != null && !catalog.isEmpty()) {
+                    chapterCache.saveCatalog(currentBookId, catalog);
+                }
+            }
+            if (catalog != null && !catalog.isEmpty()) {
+                chapterList = catalog;
+            }
+        }
+
         if (page < 0) page = 0;
         if (page >= totalPages) page = totalPages - 1;
         if (page < 0) page = 0;
