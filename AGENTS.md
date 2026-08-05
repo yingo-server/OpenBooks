@@ -36,7 +36,7 @@ OpenBooks/
 - 状态机:`STATE_BOOK_LIST`=0 / `STATE_READING`=1 / `STATE_SELECT_CHAPTER`=2,由 `drawUI()` 分发
 - 底部是**双进度条**(`drawProgressBars`,各 3px 高、贴底,不遮挡正文):青色=本节进度(阅读态=当前页/总页数),白色=整书总进度(阅读态=整书位置,分母 `chapterList.size()`;书列表/章节选择态=列表滚动位置);`statusMessage` 字段仅日志用,不再绘制
 - 触摸处理依赖硬编码像素值:书列表项高 48px、章节项高 18px(底部 18px 提示区不响应点击)、半屏分割 120px、长按阈值 1500ms、翻页左右半屏 120px——改动布局时需同步修改 `onTouchEvent`
-- 列表滚动:**ACTION_MOVE 实时跟手**,ACTION_UP 保留惯性(速度先减半,阈值 2.0px/帧起滑,渲染循环 `updateInertia()` 每帧衰减 0.80,`applyScroll` 负责钳位,到边界即停);改滚动手感时同步 `FLING_THRESHOLD/FLING_DECAY/FLING_MIN`
+- 列表滚动:**ACTION_MOVE 实时跟手**,瞬时速度限幅(±60px/帧)+ EMA 平滑;ACTION_UP 保留惯性(阈值 3.0px/帧起滑,限幅后再减半,渲染循环 `updateInertia()` 每帧衰减 0.90,`applyScroll` 钳位,到边界改为 ×0.3 摩擦减速而非瞬间停);改滚动手感时同步 `FLING_THRESHOLD/FLING_DECAY/FLING_MIN/MAX_FLING`
 - 阅读排版:11x11 字符网格(`COLS=11, ROWS=11`)、字号 20px
 - 数据全部存外部存储 `/sdcard/openbook/`:
   - `config/user/config.ob`:远程配置缓存;配置解析格式为每行 `key@value`,以 `!!!!!` 行结束,value 尾部 `!` 为转义(见 `ConfigManager.parseConfig`)

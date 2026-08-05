@@ -413,9 +413,10 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
     private float lastMoveY = 0;
     private long lastMoveTime = 0;
     private volatile float scrollVelocity = 0;
-    private static final float FLING_THRESHOLD = 2.0f;
-    private static final float FLING_DECAY = 0.80f;
+    private static final float FLING_THRESHOLD = 3.0f;
+    private static final float FLING_DECAY = 0.90f;
     private static final float FLING_MIN = 1.0f;
+    private static final float MAX_FLING = 60f;
 
     // 物理像素 -> 240x240 逻辑坐标(分辨率适配的逆变换)
     private float toLogicX(float x) { return (x - viewOffsetX) / viewScale; }
@@ -438,7 +439,13 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                 float dyPx = lastMoveY - moveY;
                 long now = System.currentTimeMillis();
                 long dt = now - lastMoveTime;
-                if (dt > 0) scrollVelocity = dyPx * 50f / dt;
+                // 瞬时速度限幅后做 EMA 平滑,避免 dt 过小导致的速度爆大
+                if (dt > 0) {
+                    float newV = dyPx * 50f / dt;
+                    if (newV > MAX_FLING) newV = MAX_FLING;
+                    else if (newV < -MAX_FLING) newV = -MAX_FLING;
+                    scrollVelocity = scrollVelocity * 0.6f + newV * 0.4f;
+                }
                 lastMoveY = moveY;
                 lastMoveTime = now;
                 applyScroll((int) dyPx);
@@ -503,10 +510,12 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                 }
                 return true;
             } else {
-                // 滑动:滚动已在 ACTION_MOVE 实时更新,这里只决定是否保留惯性(速度减半,降低惯性)
+                // 滑动:滚动已在 ACTION_MOVE 实时更新,这里只决定是否保留惯性(限幅后减半,降低惯性)
                 if (Math.abs(scrollVelocity) < FLING_THRESHOLD) {
                     scrollVelocity = 0;
                 } else {
+                    if (scrollVelocity > MAX_FLING) scrollVelocity = MAX_FLING;
+                    else if (scrollVelocity < -MAX_FLING) scrollVelocity = -MAX_FLING;
                     scrollVelocity *= 0.5f;
                 }
                 return true;
@@ -529,20 +538,20 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
             int max = Math.max(0, bookNames.size() - maxVisibleItems);
             if (bookListScrollOffset < 0) {
                 bookListScrollOffset = 0;
-                scrollVelocity = 0;
+                if (scrollVelocity < 0) scrollVelocity *= 0.3f;
             } else if (bookListScrollOffset > max) {
                 bookListScrollOffset = max;
-                scrollVelocity = 0;
+                if (scrollVelocity > 0) scrollVelocity *= 0.3f;
             }
         } else if (currentState == STATE_SELECT_CHAPTER) {
             chapterScrollOffset += delta;
             int max = Math.max(0, chapterList.size() - maxVisibleChapters);
             if (chapterScrollOffset < 0) {
                 chapterScrollOffset = 0;
-                scrollVelocity = 0;
+                if (scrollVelocity < 0) scrollVelocity *= 0.3f;
             } else if (chapterScrollOffset > max) {
                 chapterScrollOffset = max;
-                scrollVelocity = 0;
+                if (scrollVelocity > 0) scrollVelocity *= 0.3f;
             }
         }
     }
