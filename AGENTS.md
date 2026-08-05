@@ -2,9 +2,16 @@
 
 ## 项目概况
 
-面向 Android 4.4 (KitKat) 的极简小说阅读器(OpenBook,包名 `com.openbook.studio`),本仓库为**经典版**(Android 4.4–5.1)。全部代码集中在一个文件 `app/src/main/java/com/openbook/studio/MainActivity.java`(约 1400 行),无 XML 布局、无资源文件(仅 app_name)、无测试、无 lint 配置。代码注释与日志均为中文,保持一致。
+仓库根目录是双版本布局,本文件对应 **old/(经典版)**:
 
-> 现代版(Android 5.1–12L)在独立仓库 OpenBooks-Next:工具链升级、权限矩阵、平台 TLS(无 Conscrypt)。两版存储格式一致(`/sdcard/openbook/`),数据互通。
+```
+OpenBooks/
+├── .github/workflows/build.yml   ← CI 构建 old/(经典版);GitHub Actions 只读根目录,无法移入子目录
+├── old/                          ← 经典版(本文件):Android 4.4–5.1,工具链保持老旧原样
+└── new/                          ← 现代版(5.1–12L,待从修复版 old/ 复制创建)
+```
+
+面向 Android 4.4 (KitKat) 的极简小说阅读器(OpenBook,包名 `com.openbook.studio`)。全部代码集中在一个文件 `app/src/main/java/com/openbook/studio/MainActivity.java`(约 1400 行),无 XML 布局、无资源文件(仅 app_name)、无测试、无 lint 配置。代码注释与日志均为中文,保持一致。两版存储格式一致(`/sdcard/openbook/`),数据互通。
 
 ## 构建环境(最容易踩坑)
 
@@ -25,11 +32,11 @@
 
 ## 架构要点
 
-- UI 是 SurfaceView 手绘 Canvas,固定 **240x240 逻辑尺寸**;渲染循环约 20fps(50ms sleep)
+- UI 是 SurfaceView 手绘 Canvas,内部逻辑固定 **240x240**,经**分辨率适配**等比缩放到物理屏幕:最大内接正方形 `scale=min(w,h)/240` 居中(上下或左右黑边),`surfaceChanged` 计算 `viewScale/viewOffsetX/viewOffsetY`,`drawUI` 用 canvas.save/translate/scale 绘制,**触摸坐标必须经 `toLogicX/toLogicY` 逆变换**后再走逻辑像素逻辑(48/18/120 等全为逻辑值);渲染循环约 20fps(50ms sleep)
 - 状态机:`STATE_BOOK_LIST`=0 / `STATE_READING`=1 / `STATE_SELECT_CHAPTER`=2,由 `drawUI()` 分发
 - 底部是**双进度条**(`drawProgressBars`,各 3px 高、贴底,不遮挡正文):青色=本节进度(阅读态=当前页/总页数),白色=整书总进度(阅读态=整书位置,分母 `chapterList.size()`;书列表/章节选择态=列表滚动位置);`statusMessage` 字段仅日志用,不再绘制
 - 触摸处理依赖硬编码像素值:书列表项高 48px、章节项高 18px(底部 18px 提示区不响应点击)、半屏分割 120px、长按阈值 1500ms、翻页左右半屏 120px——改动布局时需同步修改 `onTouchEvent`
-- 列表滚动:**ACTION_MOVE 实时跟手**,ACTION_UP 保留惯性(`scrollVelocity` px/帧,渲染循环 `updateInertia()` 每帧衰减 0.85,`applyScroll` 负责钳位,到边界即停);改滚动行为时同步 `FLING_THRESHOLD/FLING_DECAY/FLING_MIN`
+- 列表滚动:**ACTION_MOVE 实时跟手**,ACTION_UP 保留惯性(速度先减半,阈值 2.0px/帧起滑,渲染循环 `updateInertia()` 每帧衰减 0.80,`applyScroll` 负责钳位,到边界即停);改滚动手感时同步 `FLING_THRESHOLD/FLING_DECAY/FLING_MIN`
 - 阅读排版:11x11 字符网格(`COLS=11, ROWS=11`)、字号 20px
 - 数据全部存外部存储 `/sdcard/openbook/`:
   - `config/user/config.ob`:远程配置缓存;配置解析格式为每行 `key@value`,以 `!!!!!` 行结束,value 尾部 `!` 为转义(见 `ConfigManager.parseConfig`)

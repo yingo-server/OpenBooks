@@ -97,6 +97,13 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
     private Thread renderThread;
     private final Object lock = new Object();
 
+    // ======================== 分辨率适配(240x240 逻辑 -> 物理等比缩放) ========================
+    private int canvasW = 240;
+    private int canvasH = 240;
+    private float viewScale = 1f;
+    private float viewOffsetX = 0f;
+    private float viewOffsetY = 0f;
+
     // ======================== 状态 ========================
     private static final int STATE_BOOK_LIST = 0;
     private static final int STATE_READING = 1;
@@ -205,7 +212,15 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
     }
 
     @Override
-    public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {}
+    public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
+        // 最大内接正方形:scale = size/240,居中偏移,触摸坐标按逆变换还原
+        canvasW = width;
+        canvasH = height;
+        int size = Math.min(width, height);
+        viewScale = size / 240f;
+        viewOffsetX = (width - size) / 2f;
+        viewOffsetY = (height - size) / 2f;
+    }
 
     @Override
     public void surfaceDestroyed(SurfaceHolder holder) {
@@ -260,7 +275,11 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
 
     private void drawUI(Canvas canvas) {
         bgPaint.setColor(Color.BLACK);
-        canvas.drawRect(0, 0, 240, 240, bgPaint);
+        canvas.drawRect(0, 0, canvasW, canvasH, bgPaint);
+
+        canvas.save();
+        canvas.translate(viewOffsetX, viewOffsetY);
+        canvas.scale(viewScale, viewScale);
 
         if (currentState == STATE_BOOK_LIST) {
             drawBookList(canvas);
@@ -271,6 +290,8 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         }
 
         drawProgressBars(canvas);
+
+        canvas.restore();
     }
 
     // 底部双进度条:青色(下)=本节页进度/列表当前位置,白色(上)=整书总进度
@@ -392,15 +413,19 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
     private float lastMoveY = 0;
     private long lastMoveTime = 0;
     private volatile float scrollVelocity = 0;
-    private static final float FLING_THRESHOLD = 1.2f;
-    private static final float FLING_DECAY = 0.85f;
+    private static final float FLING_THRESHOLD = 2.0f;
+    private static final float FLING_DECAY = 0.80f;
     private static final float FLING_MIN = 1.0f;
+
+    // 物理像素 -> 240x240 逻辑坐标(分辨率适配的逆变换)
+    private float toLogicX(float x) { return (x - viewOffsetX) / viewScale; }
+    private float toLogicY(float y) { return (y - viewOffsetY) / viewScale; }
 
     @Override
     public boolean onTouchEvent(MotionEvent event) {
         if (event.getAction() == MotionEvent.ACTION_DOWN) {
-            downX = event.getX();
-            downY = event.getY();
+            downX = toLogicX(event.getX());
+            downY = toLogicY(event.getY());
             downTime = System.currentTimeMillis();
             lastMoveY = downY;
             lastMoveTime = downTime;
@@ -409,18 +434,19 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
         } else if (event.getAction() == MotionEvent.ACTION_MOVE) {
             // 拖动中实时滚动(书列表/章节列表)
             if (currentState == STATE_BOOK_LIST || currentState == STATE_SELECT_CHAPTER) {
-                float dyPx = lastMoveY - event.getY();
+                float moveY = toLogicY(event.getY());
+                float dyPx = lastMoveY - moveY;
                 long now = System.currentTimeMillis();
                 long dt = now - lastMoveTime;
                 if (dt > 0) scrollVelocity = dyPx * 50f / dt;
-                lastMoveY = event.getY();
+                lastMoveY = moveY;
                 lastMoveTime = now;
                 applyScroll((int) dyPx);
                 return true;
             }
         } else if (event.getAction() == MotionEvent.ACTION_UP) {
-            float upX = event.getX();
-            float upY = event.getY();
+            float upX = toLogicX(event.getX());
+            float upY = toLogicY(event.getY());
             long upTime = System.currentTimeMillis();
             float dx = upX - downX;
             float dy = upY - downY;
@@ -477,9 +503,11 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Ru
                 }
                 return true;
             } else {
-                // 滑动:滚动已在 ACTION_MOVE 实时更新,这里只决定是否保留惯性
+                // 滑动:滚动已在 ACTION_MOVE 实时更新,这里只决定是否保留惯性(速度减半,降低惯性)
                 if (Math.abs(scrollVelocity) < FLING_THRESHOLD) {
                     scrollVelocity = 0;
+                } else {
+                    scrollVelocity *= 0.5f;
                 }
                 return true;
             }
